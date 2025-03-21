@@ -120,22 +120,22 @@ end
 export volume_prime_miller_correction
 
 """
-    flux_gacode_to_fuse(
+    flux_gacode_to_imas(
         flux_types::Tuple{Vararg{Symbol}},
-        flux_solutions::Vector{<:IMAS.FluxSolution},
+        flux_solutions::Vector{<:GACODE.FluxSolution},
         m1d::IMAS.core_transport__model___profiles_1d,
         eqt::IMAS.equilibrium__time_slice,
-        cp1d::core_profiles__profiles_1d
+        cp1d::IMAS.core_profiles__profiles_1d
     )
 
 Normalizes specified transport fluxes output by GA code via gyrobohm normalization and Miller volume correction
 """
-function flux_gacode_to_fuse(
+function flux_gacode_to_imas(
     flux_types::Tuple{Vararg{Symbol}},
-    flux_solutions::Vector{<:IMAS.FluxSolution},
+    flux_solutions::Vector{<:GACODE.FluxSolution},
     m1d::IMAS.core_transport__model___profiles_1d{T},
     eqt::IMAS.equilibrium__time_slice{T},
-    cp1d::core_profiles__profiles_1d{T}) where {T<:Real}
+    cp1d::IMAS.core_profiles__profiles_1d{T}) where {T<:Real}
 
     rho_eq_idxs = [argmin(abs.(eqt.profiles_1d.rho_tor_norm .- rho)) for rho in m1d.grid_flux.rho_tor_norm]
     rho_cp_idxs = [argmin(abs.(cp1d.grid.rho_tor_norm .- rho)) for rho in m1d.grid_flux.rho_tor_norm]
@@ -163,7 +163,7 @@ function flux_gacode_to_fuse(
     end
 end
 
-export flux_gacode_to_fuse
+export flux_gacode_to_imas
 
 """
     pick_ion_flux(ion_fluxes::AbstractVector{T}, kk::Int) where {T<:Real}
@@ -179,8 +179,6 @@ function pick_ion_flux(ion_fluxes::AbstractVector{T}, kk::Int) where {T<:Real}
         return ion_fluxes[end]
     end
 end
-
-export pick_ion_flux
 
 const document = Dict()
 document[Symbol(@__MODULE__)] = [name for name in Base.names(@__MODULE__; all=false, imported=false) if name != Symbol(@__MODULE__)]
