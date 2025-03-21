@@ -114,7 +114,7 @@ Correction to account for transformation from Miller r grid in GA code equilibri
 """
 function volume_prime_miller_correction(eqt::IMAS.equilibrium__time_slice)
     a_minor = (eqt.profiles_1d.r_outboard .- eqt.profiles_1d.r_inboard) ./ 2.0
-    return gradient(a_minor, eqt.profiles_1d.volume) ./ eqt.profiles_1d.surface
+    return IMAS.gradient(a_minor, eqt.profiles_1d.volume) ./ eqt.profiles_1d.surface
 end
 
 export volume_prime_miller_correction
@@ -178,6 +178,21 @@ function pick_ion_flux(ion_fluxes::AbstractVector{T}, kk::Int) where {T<:Real}
     else
         return ion_fluxes[end]
     end
+end
+
+"""
+    bunit(eqt1d::IMAS.equilibrium__time_slice___profiles_1d)
+
+Calculate bunit from equilibrium
+"""
+function bunit(eqt1d::IMAS.equilibrium__time_slice___profiles_1d)
+    rmin = 0.5 .* (eqt1d.r_outboard .- eqt1d.r_inboard)
+    phi = eqt1d.phi
+    return IMAS.gradient(2π * rmin, phi) ./ rmin
+end
+
+function bunit(eqt::IMAS.equilibrium__time_slice)
+    return bunit(eqt.profiles_1d)
 end
 
 const document = Dict()
