@@ -1,7 +1,7 @@
 name = "GACODE"
 uuid = "bb074124-7a58-47ce-bd41-6b7098184f23"
 authors = ["Orso Meneghini <orso82@gmail.com>"]
-version = "0.1.0"
+version = "1.0.0"
 
 [deps]
 IMAS = "13ead8c1-b7d1-41bb-a6d0-5b8b65ed587a"
