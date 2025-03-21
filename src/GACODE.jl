@@ -51,7 +51,7 @@ sound gyro radius in [cm]
 """
 function rho_s(cp1d::IMAS.core_profiles__profiles_1d, eqt::IMAS.equilibrium__time_slice)
     eqt1d = eqt.profiles_1d
-    bu = interp1d(eqt1d.rho_tor_norm, abs.(bunit(eqt1d)) .* cgs.T_to_Gauss).(cp1d.grid.rho_tor_norm)
+    bu = IMAS.interp1d(eqt1d.rho_tor_norm, abs.(bunit(eqt1d)) .* cgs.T_to_Gauss).(cp1d.grid.rho_tor_norm)
     return c_s(cp1d) ./ (cgs.e .* bu) .* (cgs.md .* cgs.c)
 end
 
@@ -63,7 +63,7 @@ export rho_s
 Geometric minor radius in [cm] evaluated
 """
 function r_min_core_profiles(eqt1d::IMAS.equilibrium__time_slice___profiles_1d, rho_tor_norm::AbstractVector)
-    return interp1d(eqt1d.rho_tor_norm, cgs.m_to_cm * 0.5 * (eqt1d.r_outboard - eqt1d.r_inboard)).(rho_tor_norm)
+    return IMAS.interp1d(eqt1d.rho_tor_norm, cgs.m_to_cm * 0.5 * (eqt1d.r_outboard - eqt1d.r_inboard)).(rho_tor_norm)
 end
 
 export r_min_core_profiles
