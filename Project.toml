@@ -5,7 +5,9 @@ version = "1.0.3"
 
 [deps]
 IMAS = "13ead8c1-b7d1-41bb-a6d0-5b8b65ed587a"
+IMASutils = "b8e4ee59-9bed-3a6a-a553-8dd24d6374ad"
 
 [compat]
 IMAS = "3, 4, 5"
+IMASutils = "1.5.1"
 julia = "1"

@@ -2,6 +2,7 @@ module GACODE
 
 using IMAS
 using IMAS: cgs, mks
+using IMASutils: argmin_abs
 
 """
     ENERGY_FLUX_e::T
@@ -137,8 +138,8 @@ function flux_gacode_to_imas(
     eqt::IMAS.equilibrium__time_slice{T},
     cp1d::IMAS.core_profiles__profiles_1d{T}) where {T<:Real}
 
-    rho_eq_idxs = [argmin(abs.(eqt.profiles_1d.rho_tor_norm .- rho)) for rho in m1d.grid_flux.rho_tor_norm]
-    rho_cp_idxs = [argmin(abs.(cp1d.grid.rho_tor_norm .- rho)) for rho in m1d.grid_flux.rho_tor_norm]
+    rho_eq_idxs = [argmin_abs(eqt.profiles_1d.rho_tor_norm, rho) for rho in m1d.grid_flux.rho_tor_norm]
+    rho_cp_idxs = [argmin_abs(cp1d.grid.rho_tor_norm, rho) for rho in m1d.grid_flux.rho_tor_norm]
 
     vprime_miller = volume_prime_miller_correction(eqt)
 
