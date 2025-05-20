@@ -41,6 +41,11 @@ Sounds speed in [cm/s]
 """
 function c_s(cp1d::IMAS.core_profiles__profiles_1d)
     return sqrt.(cgs.k .* cp1d.electrons.temperature ./ cgs.md)
+    Te = cp1d.electrons.temperature
+    return c_s.(Te)
+end
+function c_s(Te::Real)
+    return sqrt(cgs.k * Te / cgs.md)
 end
 
 export c_s
@@ -52,8 +57,10 @@ sound gyro radius in [cm]
 """
 function rho_s(cp1d::IMAS.core_profiles__profiles_1d, eqt::IMAS.equilibrium__time_slice)
     eqt1d = eqt.profiles_1d
-    bu = IMAS.interp1d(eqt1d.rho_tor_norm, abs.(bunit(eqt1d)) .* cgs.T_to_Gauss).(cp1d.grid.rho_tor_norm)
-    return c_s(cp1d) ./ (cgs.e .* bu) .* (cgs.md .* cgs.c)
+    rho_cp = cp1d.grid.rho_tor_norm
+    Te = cp1d.electrons.temperature
+    bu_itp  = IMAS.interp1d(eqt1d.rho_tor_norm, bunit(eqt1d))
+    return @. c_s(Te) / (cgs.e * abs(bu_itp(rho_cp)) * cgs.T_to_Gauss) * (cgs.md * cgs.c)
 end
 
 export rho_s
@@ -76,9 +83,15 @@ export r_min_core_profiles
 Gyrobohm energy flux
 """
 function gyrobohm_energy_flux(cp1d::IMAS.core_profiles__profiles_1d, eqt::IMAS.equilibrium__time_slice)
-    return cp1d.electrons.density_thermal ./ cgs.m³_to_cm³ .* cgs.k .* cp1d.electrons.temperature .*
-           c_s(cp1d) .* (rho_s(cp1d, eqt) ./ (eqt.boundary.minor_radius .* cgs.m_to_cm)) .^ 2 .* cgs.Erg_to_J .*
-           cgs.m²_to_cm²
+    ne = cp1d.electrons.density_thermal
+    Te = cp1d.electrons.temperature
+    rhos = rho_s(cp1d, eqt)
+    a = eqt.boundary.minor_radius
+    return gyrobohm_energy_flux.(ne, Te, rhos, a)
+end
+function gyrobohm_energy_flux(ne::Real, Te::Real, rhos::Real, a::Real)
+    return ne / cgs.m³_to_cm³ * cgs.k * Te * c_s(Te) *
+            (rhos / (a * cgs.m_to_cm)) ^ 2 * cgs.Erg_to_J * cgs.m²_to_cm²
 end
 
 export gyrobohm_energy_flux
@@ -89,8 +102,11 @@ export gyrobohm_energy_flux
 Gyrobohm particle flux
 """
 function gyrobohm_particle_flux(cp1d::IMAS.core_profiles__profiles_1d, eqt::IMAS.equilibrium__time_slice)
-    norm = mks.e .* cp1d.electrons.temperature
-    return gyrobohm_energy_flux(cp1d, eqt) ./ norm
+    ne = cp1d.electrons.density_thermal
+    Te = cp1d.electrons.temperature
+    rhos = rho_s(cp1d, eqt)
+    a = eqt.boundary.minor_radius
+    return @. gyrobohm_energy_flux(ne, Te, rhos, a) / (mks.e * cp1d.electrons.temperature)
 end
 
 export gyrobohm_particle_flux
@@ -189,7 +205,10 @@ Calculate bunit from equilibrium
 function bunit(eqt1d::IMAS.equilibrium__time_slice___profiles_1d)
     rmin = 0.5 .* (eqt1d.r_outboard .- eqt1d.r_inboard)
     phi = eqt1d.phi
-    return IMAS.gradient(2π * rmin, phi) ./ rmin
+    bunit = similar(phi)
+    IMAS.gradient!(bunit, 2π .* rmin, phi)
+    bunit ./= rmin
+    return bunit
 end
 
 function bunit(eqt::IMAS.equilibrium__time_slice)
