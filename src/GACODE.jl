@@ -40,7 +40,11 @@ end
 Sounds speed in [cm/s]
 """
 function c_s(cp1d::IMAS.core_profiles__profiles_1d)
-    return sqrt.(cgs.k .* cp1d.electrons.temperature ./ cgs.md)
+    Te = cp1d.electrons.temperature
+    return c_s.(Te)
+end
+function c_s(Te::Real)
+    return sqrt(cgs.k * Te / cgs.md)
 end
 
 export c_s
@@ -52,8 +56,14 @@ sound gyro radius in [cm]
 """
 function rho_s(cp1d::IMAS.core_profiles__profiles_1d, eqt::IMAS.equilibrium__time_slice)
     eqt1d = eqt.profiles_1d
-    bu = IMAS.interp1d(eqt1d.rho_tor_norm, abs.(bunit(eqt1d)) .* cgs.T_to_Gauss).(cp1d.grid.rho_tor_norm)
-    return c_s(cp1d) ./ (cgs.e .* bu) .* (cgs.md .* cgs.c)
+    rho_cp = cp1d.grid.rho_tor_norm
+    Te = cp1d.electrons.temperature
+    bu_itp  = IMAS.interp1d(eqt1d.rho_tor_norm, bunit(eqt1d))
+    return rho_s.(rho_cp, Te, Ref(bu_itp))
+end
+
+function rho_s(rho::Real, Te::Real, bu_itp)
+    return c_s(Te) / (cgs.e * abs(bu_itp(rho)) * cgs.T_to_Gauss) * (cgs.md * cgs.c)
 end
 
 export rho_s
@@ -76,9 +86,15 @@ export r_min_core_profiles
 Gyrobohm energy flux
 """
 function gyrobohm_energy_flux(cp1d::IMAS.core_profiles__profiles_1d, eqt::IMAS.equilibrium__time_slice)
-    return cp1d.electrons.density_thermal ./ cgs.m³_to_cm³ .* cgs.k .* cp1d.electrons.temperature .*
-           c_s(cp1d) .* (rho_s(cp1d, eqt) ./ (eqt.boundary.minor_radius .* cgs.m_to_cm)) .^ 2 .* cgs.Erg_to_J .*
-           cgs.m²_to_cm²
+    ne = cp1d.electrons.density_thermal
+    Te = cp1d.electrons.temperature
+    rhos = rho_s(cp1d, eqt)
+    a = eqt.boundary.minor_radius
+    return gyrobohm_energy_flux.(ne, Te, rhos, a)
+end
+function gyrobohm_energy_flux(ne::Real, Te::Real, rhos::Real, a::Real)
+    return ne / cgs.m³_to_cm³ * cgs.k * Te * c_s(Te) *
+            (rhos / (a * cgs.m_to_cm)) ^ 2 * cgs.Erg_to_J * cgs.m²_to_cm²
 end
 
 export gyrobohm_energy_flux
@@ -89,8 +105,14 @@ export gyrobohm_energy_flux
 Gyrobohm particle flux
 """
 function gyrobohm_particle_flux(cp1d::IMAS.core_profiles__profiles_1d, eqt::IMAS.equilibrium__time_slice)
-    norm = mks.e .* cp1d.electrons.temperature
-    return gyrobohm_energy_flux(cp1d, eqt) ./ norm
+    ne = cp1d.electrons.density_thermal
+    Te = cp1d.electrons.temperature
+    rhos = rho_s(cp1d, eqt)
+    a = eqt.boundary.minor_radius
+    return gyrobohm_particle_flux.(ne, Te, rhos, a)
+end
+function gyrobohm_particle_flux(ne::Real, Te::Real, rhos::Real, a::Real)
+    return gyrobohm_energy_flux(ne, Te, rhos, a) / (mks.e * Te)
 end
 
 export gyrobohm_particle_flux
@@ -101,9 +123,15 @@ export gyrobohm_particle_flux
 Gyrobohm momentum flux
 """
 function gyrobohm_momentum_flux(cp1d::IMAS.core_profiles__profiles_1d, eqt::IMAS.equilibrium__time_slice)
-    return cp1d.electrons.density_thermal ./ cgs.m³_to_cm³ .* cgs.k .* cp1d.electrons.temperature .*
-           eqt.boundary.minor_radius .* cgs.m_to_cm .* (rho_s(cp1d, eqt) ./ (eqt.boundary.minor_radius .* cgs.m_to_cm)) .^ 2 .* cgs.Erg_to_J .*
-           cgs.m²_to_cm²
+    ne = cp1d.electrons.density_thermal
+    Te = cp1d.electrons.temperature
+    rhos = rho_s(cp1d, eqt)
+    a = eqt.boundary.minor_radius
+    return gyrobohm_momentum_flux.(ne, Te, rhos, a)
+end
+function gyrobohm_momentum_flux(ne::Real, Te::Real, rhos::Real, a::Real)
+    return ne / cgs.m³_to_cm³ * cgs.k * Te *
+            rhos ^ 2 / (a * cgs.m_to_cm) * cgs.Erg_to_J * cgs.m²_to_cm²
 end
 
 export gyrobohm_momentum_flux
@@ -138,28 +166,34 @@ function flux_gacode_to_imas(
     eqt::IMAS.equilibrium__time_slice{T},
     cp1d::IMAS.core_profiles__profiles_1d{T}) where {T<:Real}
 
+    rho_cp = cp1d.grid.rho_tor_norm
     rho_eq_idxs = [argmin_abs(eqt.profiles_1d.rho_tor_norm, rho) for rho in m1d.grid_flux.rho_tor_norm]
-    rho_cp_idxs = [argmin_abs(cp1d.grid.rho_tor_norm, rho) for rho in m1d.grid_flux.rho_tor_norm]
+    rho_cp_idxs = [argmin_abs(rho_cp, rho) for rho in m1d.grid_flux.rho_tor_norm]
 
-    vprime_miller = volume_prime_miller_correction(eqt)
+    @views vprime_miller = volume_prime_miller_correction(eqt)[rho_eq_idxs]
+    @views ne = cp1d.electrons.density_thermal[rho_cp_idxs]
+    @views Te = cp1d.electrons.temperature[rho_cp_idxs]
+    bu_itp  = IMAS.interp1d(eqt.profiles_1d.rho_tor_norm, bunit(eqt.profiles_1d))
+    @views rhos = rho_s.(rho_cp[rho_cp_idxs], Te, Ref(bu_itp))
+    a = eqt.boundary.minor_radius
 
     if :ion_energy_flux in flux_types
-        m1d.total_ion_energy.flux = gyrobohm_energy_flux(cp1d, eqt)[rho_cp_idxs] .* [f.ENERGY_FLUX_i for f in flux_solutions] .* vprime_miller[rho_eq_idxs]
+        m1d.total_ion_energy.flux = @. gyrobohm_energy_flux(ne, Te, rhos, a) * (f.ENERGY_FLUX_i for f in flux_solutions) * vprime_miller
     end
     if :electron_energy_flux in flux_types
-        m1d.electrons.energy.flux = gyrobohm_energy_flux(cp1d, eqt)[rho_cp_idxs] .* [f.ENERGY_FLUX_e for f in flux_solutions] .* vprime_miller[rho_eq_idxs]
+        m1d.electrons.energy.flux = @. gyrobohm_energy_flux(ne, Te, rhos, a) * (f.ENERGY_FLUX_e for f in flux_solutions) * vprime_miller
     end
     if :electron_particle_flux in flux_types
-        m1d.electrons.particles.flux = gyrobohm_particle_flux(cp1d, eqt)[rho_cp_idxs] .* [f.PARTICLE_FLUX_e for f in flux_solutions] .* vprime_miller[rho_eq_idxs]
+        m1d.electrons.particles.flux = @. gyrobohm_particle_flux(ne, Te, rhos, a) * (f.PARTICLE_FLUX_e for f in flux_solutions) * vprime_miller
     end
     if :momentum_flux in flux_types
-        m1d.momentum_tor.flux = gyrobohm_momentum_flux(cp1d, eqt)[rho_cp_idxs] .* [f.STRESS_TOR_i for f in flux_solutions] .* vprime_miller[rho_eq_idxs]
+        m1d.momentum_tor.flux = @. gyrobohm_momentum_flux(ne, Te, rhos, a) * (f.STRESS_TOR_i for f in flux_solutions) * vprime_miller
     end
 
     if :ion_particle_flux in flux_types
         for (kk, ion) in enumerate(cp1d.ion)
             ion = resize!(m1d.ion, "element[1].a" => ion.element[1].z_n, "element[1].z_n" => ion.element[1].z_n, "label" => ion.label)
-            ion.particles.flux = gyrobohm_particle_flux(cp1d, eqt)[rho_cp_idxs] .* [pick_ion_flux(f.PARTICLE_FLUX_i, kk) for f in flux_solutions] .* vprime_miller[rho_eq_idxs]
+            ion.particles.flux = gyrobohm_particle_flux.(ne, Te, rhos, a) .* (pick_ion_flux(f.PARTICLE_FLUX_i, kk) for f in flux_solutions) .* vprime_miller
         end
     end
 end
@@ -173,7 +207,7 @@ Select which ion flux to take
 """
 function pick_ion_flux(ion_fluxes::AbstractVector{T}, kk::Int) where {T<:Real}
     if isempty(ion_fluxes)
-        return T(0.0)
+        return zero(T)
     elseif kk <= length(ion_fluxes)
         return ion_fluxes[kk]
     else
@@ -189,7 +223,10 @@ Calculate bunit from equilibrium
 function bunit(eqt1d::IMAS.equilibrium__time_slice___profiles_1d)
     rmin = 0.5 .* (eqt1d.r_outboard .- eqt1d.r_inboard)
     phi = eqt1d.phi
-    return IMAS.gradient(2π * rmin, phi) ./ rmin
+    bunit = similar(phi)
+    IMAS.gradient!(bunit, 2π .* rmin, phi)
+    bunit ./= rmin
+    return bunit
 end
 
 function bunit(eqt::IMAS.equilibrium__time_slice)
