@@ -251,11 +251,14 @@ Base.@kwdef mutable struct GACODEInput
     torfluxa::Union{Real,Missing} = missing
 
     # Ion species information
-    ions::Union{Dict{Int, Vector{Any}},Missing} = missing  # ion_index => [label, Z, A, type]
+    name::Union{Vector{AbstractString},Missing} = missing
+    type::Union{Vector{AbstractString},Missing} = missing
+    mass::Union{Vector{Real},Missing} = missing
+    z::Union{Vector{Real},Missing} = missing
     
     # Electron profiles
     ne::Union{Vector{Real},Missing} = missing
-    Te::Union{Vector{Real},Missing} = missing
+    te::Union{Vector{Real},Missing} = missing
 
     # Ion profiles
     ni::Union{Matrix{Real},Missing} = missing   
@@ -338,6 +341,7 @@ function expro_write(input_gacode,filename)
         println(io, "#   *cerfile : null")
         println(io, "#      *vgen : null")
         println(io, "#     *tgyro : null")
+
         println(io, "#")
         # Write data
 
@@ -347,22 +351,22 @@ function expro_write(input_gacode,filename)
         expro_writei(io, input_gacode.time, "time")
 
         println(io, "# " * "name")
-        println(io, join([strip(input_gacode.ions[i][1]) for i in 1:nion], " "))
+        println(io, join([strip(input_gacode.name[i]) for i in 1:nion], " "))
         
         println(io, "# " * "type") #[label, Z, A, type]
-        println(io, join([strip(input_gacode.ions[i][4]) for i in 1:nion], " "))
+        println(io, join([strip(input_gacode.type[i]) for i in 1:nion], " "))
         
         println(io, "# " * "masse")
         @printf(io, "%.7e\n", IMAS.mks.m_e/IMAS.mks.m_p)
         
         println(io, "# " * "mass")
-        println(io, join([@sprintf("%.7e", input_gacode.ions[i][3]) for i in 1:nion], " "))
+        println(io, join([@sprintf("%.7e", input_gacode.mass[i]) for i in 1:nion], " "))
         
         println(io, "# " * "ze")
         @printf(io, "%.7e\n", -1.0)
         
         println(io, "# " * "z")
-        println(io, join([@sprintf("%.7e", input_gacode.ions[i][2]) for i in 1:nion], " "))
+        println(io, join([@sprintf("%.7e", input_gacode.z[i]) for i in 1:nion], " "))
         # Write vector/array data, skipping objects that are 0.0
 
         expro_writes(io, input_gacode.torfluxa, "torfluxa", "Wb/radian")
@@ -393,7 +397,7 @@ function expro_write(input_gacode,filename)
         expro_writev(io, input_gacode.shape_sin6, nexp, "shape_sin6", "-")
         expro_writev(io, input_gacode.ne, nexp, "ne", "10^19/m^3")
         expro_writea(io, input_gacode.ni, nion, nexp, "ni", "10^19/m^3")
-        expro_writev(io, input_gacode.Te, nexp, "te", "keV")
+        expro_writev(io, input_gacode.te, nexp, "te", "keV")
         expro_writea(io, input_gacode.ti, nion, nexp, "ti", "keV")
         expro_writev(io, input_gacode.ptot, nexp, "ptot", "Pa")
         expro_writev(io, input_gacode.fpol, nexp, "fpol", "T-m")
@@ -406,7 +410,6 @@ function expro_write(input_gacode,filename)
         expro_writev(io, input_gacode.z_eff, nexp, "z_eff", "-")
         expro_writea(io, input_gacode.vpol, nion, nexp, "vpol", "m/s")
         expro_writea(io, input_gacode.vtor, nion, nexp, "vtor", "m/s")
-
         expro_writev(io, input_gacode.qohme, nexp, "qohme", "MW/m^3")
         expro_writev(io, input_gacode.qbeame, nexp, "qbeame", "MW/m^3")
         expro_writev(io, input_gacode.qbeami, nexp, "qbeami", "MW/m^3")
@@ -441,8 +444,9 @@ function expro_writei(io::IO, i::Integer, xs1::String)
     """
     Write integer value with identifier if positive
     """
+    
     if i > 0
-        println(io, "# " * xs1)
+        println(io,  "# " * xs1)
         println(io, i)
     end
 end
@@ -459,11 +463,11 @@ function expro_writev(io::IO, x::Union{Vector{<:Real},Missing}, n::Integer, xs1:
     end
 end
 
-function expro_writea(io::IO, x::Matrix{<:Real}, m::Integer, n::Integer, xs1::String, xs2::String)
+function expro_writea(io::IO, x::Union{Matrix{<:Real},Missing}, m::Integer, n::Integer, xs1::String, xs2::String)
     """
     Write array values (matrix) with row indices if non-zero
     """
-    if sum(abs.(x)) > 1e-16
+    if ~ismissing(x) &&  sum(abs.(x)) > 1e-16
         println(io, "# " * xs1 * " | " * xs2)
         for i in 1:n
             @printf(io, "%3d ", i)
@@ -566,7 +570,7 @@ function create_gacode_input_struct(dd)
     input_gacode.torfluxa = eqt1d.phi[end]
     # Set electron profiles
     input_gacode.ne = cp1d.electrons.density / 1e19
-    input_gacode.Te = cp1d.electrons.temperature / 1e3
+    input_gacode.te = cp1d.electrons.temperature / 1e3
     
     # Initialize total pressure with electron contribution
     input_gacode.ptot = @. cp1d.electrons.density_thermal * cp1d.electrons.temperature * IMAS.mks.e
@@ -589,7 +593,6 @@ function create_gacode_input_struct(dd)
     input_gacode.vpol = zeros(input_gacode.nion,input_gacode.nexp)
     # Process ion species
     i = 0
-    input_gacode.ions = Dict{Int, Vector{Any}}()
     for (k, ion) in enumerate(cp1d.ion)
         A = ion.element[1].a
         Z = ion.element[1].z_n
@@ -597,7 +600,10 @@ function create_gacode_input_struct(dd)
         # Handle thermal ions
         if sum(abs.(ion.density_thermal)) > 0
             i += 1
-            input_gacode.ions[i] = [ion.label, Z, A, "thermal"]
+            input_gacode.type = "thermal"
+            input_gacode.name = ion.label 
+            input_gacode.z = Z
+            input_gacode.mass = A
             # Use the new property syntax
 
             
@@ -612,8 +618,11 @@ function create_gacode_input_struct(dd)
         # Handle fast ions
         if sum(abs.(ion.density_fast)) > 0
             i += 1
-            input_gacode.ions[i] = [ion.label, Z, A, "fast"]
-            
+            input_gacode.type = "fast"
+            input_gacode.name = ion.label 
+            input_gacode.z = Z
+            input_gacode.mass = A
+
             Ti_fast = (((2 .* ion.pressure_fast_perpendicular .+ ion.pressure_fast_parallel) ./ ion.density_fast) ./ IMAS.mks.e ./ 1e3)
             ni_fast = ion.density_fast / 1e19
             
@@ -636,6 +645,65 @@ function create_gacode_input_struct(dd)
 
     update_hcd(dd, input_gacode)
     
+    return input_gacode
+end
+
+function expro_read(filename::String)
+    input_gacode = GACODEInput()
+    lines = readlines(filename)
+    function get_varname(line)
+        if startswith(line, "# ")
+            return split(line, " ")[2]
+        else 
+            return nothing
+        end
+    end
+
+    for field_name in fieldnames(GACODEInput)
+        if fieldtype(typeof(input_gacode), field_name) ==Union{Missing, Vector{AbstractString}}
+            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
+            setproperty!(input_gacode, field_name, collect(split(lines[iline+1]," ")))
+        end
+
+        if fieldtype(typeof(input_gacode), field_name) ==Union{Missing, Int}
+            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
+            setproperty!(input_gacode, field_name, parse(Int,lines[iline+1]))
+        end
+
+        if fieldtype(typeof(input_gacode), field_name) ==Union{Missing, Real}
+            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
+            setproperty!(input_gacode, field_name, parse(Float64,lines[iline+1]))
+        end
+
+        nexp = input_gacode.nexp
+        nion = input_gacode.nion
+        if field_name ==:mass || field_name ==:z #nion length vectors
+            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
+            setproperty!(input_gacode, field_name, parse.(Float64,split(lines[iline+1])))
+        elseif fieldtype(typeof(input_gacode), field_name) == Union{Missing, Vector{Real}} #nexp length vectors
+            tmp_array = zeros(nexp)
+            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
+
+            if ~isnothing(iline)
+                for (i,line) in enumerate(lines[iline+1:iline+nexp])
+                    tmp_array[i] = parse(Float64,split(lines[iline+i])[2])
+                end
+                setproperty!(input_gacode, field_name, tmp_array)
+            end
+        end
+        
+        if fieldtype(typeof(input_gacode), field_name) == Union{Missing, Matrix{Real}}
+            tmp_array = zeros(nion, nexp)
+    
+            iline = findlast(line -> contains(line, String(field_name)), lines)
+            if ~isnothing(iline)
+                for (i,line) in enumerate(lines[iline+1:iline+nexp])
+                    tmp_array[:,i] = parse.(Float64,split(lines[iline+i])[2:end])
+                end
+                setproperty!(input_gacode, field_name, tmp_array)
+            end
+        end
+    end
     return input_gacode
 end
 
