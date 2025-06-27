@@ -151,11 +151,11 @@ export volume_prime_miller_correction
 
 """
     flux_gacode_to_imas(
-        flux_types::Tuple{Vararg{Symbol}},
-        flux_solutions::Vector{<:GACODE.FluxSolution},
-        m1d::IMAS.core_transport__model___profiles_1d,
-        eqt::IMAS.equilibrium__time_slice,
-        cp1d::IMAS.core_profiles__profiles_1d
+    	flux_types::Tuple{Vararg{Symbol}},
+    	flux_solutions::Vector{<:GACODE.FluxSolution},
+    	m1d::IMAS.core_transport__model___profiles_1d,
+    	eqt::IMAS.equilibrium__time_slice,
+    	cp1d::IMAS.core_profiles__profiles_1d
     )
 
 Normalizes specified transport fluxes output by GA code via gyrobohm normalization and Miller volume correction
@@ -236,7 +236,7 @@ end
 
 
 # Define the mutable struct for GACODE input
-Base.@kwdef mutable struct GACODEInput
+Base.@kwdef mutable struct InputGACODE
     # Header information
     header_lines::Union{Vector{String},Missing} = missing
 
@@ -327,7 +327,7 @@ Base.@kwdef mutable struct GACODEInput
 end
 
 
-function expro_write(input_gacode, filename)
+function save(input_gacode::InputGACODE, filename::String)
 
     nexp = input_gacode.nexp
     nion = input_gacode.nion
@@ -536,8 +536,8 @@ end
 
 
 # Convert your existing code to use the struct
-function create_gacode_input_struct(dd)
-    input_gacode = GACODEInput()
+function InputGACODE(dd::IMAS.dd)
+    input_gacode = InputGACODE()
     cocosio = 2  # GACODE uses COCOS 2
 
     rho = dd.core_profiles.profiles_1d[].grid.rho_tor_norm
@@ -557,7 +557,12 @@ function create_gacode_input_struct(dd)
     else
         input_gacode.shot = dd.dataset_description.data_entry.pulse
     end
-    input_gacode.time = Int64(floor(1e3 * dd.global_time))
+
+    if iszero(dd.global_time)
+        input_gacode.time = 1
+    else
+        input_gacode.time = Int64(floor(1e3 * dd.global_time))
+    end
 
     # Set geometric profiles
     rho_eq = eqt1d.rho_tor_norm
@@ -658,8 +663,8 @@ function create_gacode_input_struct(dd)
     return input_gacode
 end
 
-function expro_read(filename::String)
-    input_gacode = GACODEInput()
+function load(filename::String)
+    input_gacode = InputGACODE()
     lines = readlines(filename)
     function get_varname(line)
         if startswith(line, "# ")
@@ -669,13 +674,14 @@ function expro_read(filename::String)
         end
     end
 
-    for field_name in fieldnames(GACODEInput)
+    for field_name in fieldnames(InputGACODE)
         if fieldtype(typeof(input_gacode), field_name) == Union{Missing,Vector{AbstractString}}
             iline = findfirst(line -> get_varname(line) == String(field_name), lines)
             setproperty!(input_gacode, field_name, collect(split(lines[iline+1], " ")))
         end
 
         if fieldtype(typeof(input_gacode), field_name) == Union{Missing,Int}
+            @show field_name
             iline = findfirst(line -> get_varname(line) == String(field_name), lines)
             setproperty!(input_gacode, field_name, parse(Int, lines[iline+1]))
         end
