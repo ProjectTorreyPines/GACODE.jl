@@ -551,8 +551,13 @@ function create_gacode_input_struct(dd)
     input_gacode.rcentr = dd.equilibrium.vacuum_toroidal_field.r0
     input_gacode.rho = rho
     input_gacode.nexp = length(rho)
-    input_gacode.shot = dd.dataset_description.data_entry.pulse
-    input_gacode.time = Int64(1e3 * dd.global_time)
+
+    if ismissing(dd.dataset_description.data_entry, :pulse)
+        input_gacode.shot = 1
+    else
+        input_gacode.shot = dd.dataset_description.data_entry.pulse
+    end
+    input_gacode.time = Int64(floor(1e3 * dd.global_time))
 
     # Set geometric profiles
     rho_eq = eqt1d.rho_tor_norm
@@ -576,22 +581,29 @@ function create_gacode_input_struct(dd)
     # Initialize total pressure with electron contribution
     input_gacode.ptot = @. cp1d.electrons.density_thermal * cp1d.electrons.temperature * IMAS.mks.e
 
-    i = 0
-    for (k, ion) in enumerate(cp1d.ion)
+    nion = 0
+    for ion in cp1d.ion
         if sum(abs.(ion.density_thermal)) > 0
-            i += 1
+            nion += 1
         end
         if sum(abs.(ion.density_fast)) > 0
-            i += 1
+            nion += 1
         end
     end
 
-    input_gacode.nion = i
+    input_gacode.nion = nion
 
-    input_gacode.ni = zeros(input_gacode.nion, input_gacode.nexp)
-    input_gacode.ti = zeros(input_gacode.nion, input_gacode.nexp)
-    input_gacode.vtor = zeros(input_gacode.nion, input_gacode.nexp)
-    input_gacode.vpol = zeros(input_gacode.nion, input_gacode.nexp)
+    input_gacode.ni = zeros(nion, input_gacode.nexp)
+    input_gacode.ti = zeros(nion, input_gacode.nexp)
+    input_gacode.vtor = zeros(nion, input_gacode.nexp)
+    input_gacode.vpol = zeros(nion, input_gacode.nexp)
+
+    input_gacode.type = Vector{String}(undef, nion)
+    input_gacode.name = Vector{String}(undef, nion)
+    input_gacode.z = zeros(nion)
+    input_gacode.mass = zeros(nion)
+
+
     # Process ion species
     i = 0
     for (k, ion) in enumerate(cp1d.ion)
@@ -601,18 +613,15 @@ function create_gacode_input_struct(dd)
         # Handle thermal ions
         if sum(abs.(ion.density_thermal)) > 0
             i += 1
-            input_gacode.type = "thermal"
-            input_gacode.name = ion.label
-            input_gacode.z = Z
-            input_gacode.mass = A
-            # Use the new property syntax
-
+            input_gacode.type[i] = "thermal"
+            input_gacode.name[i] = ion.label
+            input_gacode.z[i] = Z
+            input_gacode.mass[i] = A
 
             input_gacode.ni[i, :] = ion.density_thermal / 1e19
             input_gacode.ti[i, :] = cp1d.ion[k].temperature / 1e3
             input_gacode.vtor[i, :] = 0.0 * ion.density_thermal
             input_gacode.vpol[i, :] = 0.0 * ion.density_thermal
-
             input_gacode.ptot += ion.density_thermal .* ion.temperature .* IMAS.mks.e
         end
 
@@ -686,7 +695,7 @@ function expro_read(filename::String)
             iline = findfirst(line -> get_varname(line) == String(field_name), lines)
 
             if ~isnothing(iline)
-                for (i, line) in enumerate(lines[iline+1:iline+nexp])
+                for (i, line) in enumerate(lines[(iline+1):(iline+nexp)])
                     tmp_array[i] = parse(Float64, split(lines[iline+i])[2])
                 end
                 setproperty!(input_gacode, field_name, tmp_array)
@@ -698,7 +707,7 @@ function expro_read(filename::String)
 
             iline = findlast(line -> contains(line, String(field_name)), lines)
             if ~isnothing(iline)
-                for (i, line) in enumerate(lines[iline+1:iline+nexp])
+                for (i, line) in enumerate(lines[(iline+1):(iline+nexp)])
                     tmp_array[:, i] = parse.(Float64, split(lines[iline+i])[2:end])
                 end
                 setproperty!(input_gacode, field_name, tmp_array)
