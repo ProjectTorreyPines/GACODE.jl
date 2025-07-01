@@ -472,7 +472,7 @@ function expro_writea(io::IO, x::Union{Matrix{<:Real},Missing}, m::Integer, n::I
         for i in 1:n
             @printf(io, "%3d ", i)
             for j in 1:m
-                @printf(io, "%.7e ", x[j, i])
+                @printf(io, "%.7e  ", x[j, i])
             end
             println(io)
         end
@@ -675,13 +675,13 @@ function load(filename::String)
     end
 
     for field_name in fieldnames(InputGACODE)
+
         if fieldtype(typeof(input_gacode), field_name) == Union{Missing,Vector{AbstractString}}
             iline = findfirst(line -> get_varname(line) == String(field_name), lines)
             setproperty!(input_gacode, field_name, collect(split(lines[iline+1], " ")))
         end
 
         if fieldtype(typeof(input_gacode), field_name) == Union{Missing,Int}
-            @show field_name
             iline = findfirst(line -> get_varname(line) == String(field_name), lines)
             setproperty!(input_gacode, field_name, parse(Int, lines[iline+1]))
         end
@@ -710,11 +710,10 @@ function load(filename::String)
 
         if fieldtype(typeof(input_gacode), field_name) == Union{Missing,Matrix{Real}}
             tmp_array = zeros(nion, nexp)
-
-            iline = findlast(line -> contains(line, String(field_name)), lines)
+            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
             if ~isnothing(iline)
                 for (i, line) in enumerate(lines[(iline+1):(iline+nexp)])
-                    tmp_array[:, i] = parse.(Float64, split(lines[iline+i])[2:end])
+                    tmp_array[:, i] = parse.(Float64, split(lines[iline+i])[2:nion+1])
                 end
                 setproperty!(input_gacode, field_name, tmp_array)
             end
