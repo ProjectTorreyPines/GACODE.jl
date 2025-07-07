@@ -546,8 +546,8 @@ function create_gacode_input_struct(dd)
     eqt1d = eqt.profiles_1d
 
     # Set basic parameters
-    input_gacode.bcentr = @ddtime dd.equilibrium.vacuum_toroidal_field.b0
-    input_gacode.current = eqt.global_quantities.ip / 1e6
+    input_gacode.bcentr = @ddtime -1.0*dd.equilibrium.vacuum_toroidal_field.b0
+    input_gacode.current = -1*eqt.global_quantities.ip / 1e6
     input_gacode.rcentr = dd.equilibrium.vacuum_toroidal_field.r0
     input_gacode.rho = rho
     input_gacode.nexp = length(rho)
@@ -557,8 +557,8 @@ function create_gacode_input_struct(dd)
     # Set geometric profiles
     rho_eq = eqt1d.rho_tor_norm
     input_gacode.polflux = IMAS.interp1d(rho_eq, eqt1d.psi .- eqt1d.psi[1]).(rho)
-    input_gacode.rmin = GACODE.r_min_core_profiles(eqt1d, rho)
-    input_gacode.rmaj = IMAS.interp1d(rho_eq, IMAS.cgs.m_to_cm .* 0.5 .* (eqt1d.r_outboard .+ eqt1d.r_inboard)).(rho)
+    input_gacode.rmin = GACODE.r_min_core_profiles(eqt1d, rho) / IMAS.cgs.m_to_cm
+    input_gacode.rmaj = IMAS.interp1d(rho_eq, 0.5 .* (eqt1d.r_outboard .+ eqt1d.r_inboard)).(rho)
     input_gacode.kappa = IMAS.interp1d(rho_eq, eqt1d.elongation).(rho)
     input_gacode.delta = IMAS.interp1d(rho_eq, 0.5 .* (eqt1d.triangularity_lower .+ eqt1d.triangularity_upper)).(rho)
     input_gacode.zeta = IMAS.interp1d(rho_eq, 0.25 .* (
@@ -567,7 +567,7 @@ function create_gacode_input_struct(dd)
     )).(rho)
     input_gacode.zmag = IMAS.interp1d(rho_eq, eqt1d.geometric_axis.z).(rho)
     input_gacode.q = IMAS.interp1d(rho_eq, eqt1d.q).(rho)
-    input_gacode.torfluxa = eqt1d.phi[end]
+    input_gacode.torfluxa = -1*eqt1d.phi[end]/(2*π)
     # Set electron profiles
     input_gacode.ne = cp1d.electrons.density / 1e19
     input_gacode.te = cp1d.electrons.temperature / 1e3
