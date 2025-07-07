@@ -546,8 +546,8 @@ function InputGACODE(dd::IMAS.dd)
     eqt1d = eqt.profiles_1d
 
     # Set basic parameters
-    input_gacode.bcentr = @ddtime -1.0*dd.equilibrium.vacuum_toroidal_field.b0
-    input_gacode.current = -1*eqt.global_quantities.ip / 1e6
+    input_gacode.bcentr = -1.0*(@ddtime dd.equilibrium.vacuum_toroidal_field.b0)
+    input_gacode.current = -1.0*eqt.global_quantities.ip / 1e6
     input_gacode.rcentr = dd.equilibrium.vacuum_toroidal_field.r0
     input_gacode.rho = rho
     input_gacode.nexp = length(rho)
@@ -578,7 +578,7 @@ function InputGACODE(dd::IMAS.dd)
         )).(rho)
     input_gacode.zmag = IMAS.interp1d(rho_eq, eqt1d.geometric_axis.z).(rho)
     input_gacode.q = IMAS.interp1d(rho_eq, eqt1d.q).(rho)
-    input_gacode.torfluxa = -1*eqt1d.phi[end]/(2*π)
+    input_gacode.torfluxa = -1.0.*eqt1d.phi[end]./(2*π)
     # Set electron profiles
     input_gacode.ne = cp1d.electrons.density / 1e19
     input_gacode.te = cp1d.electrons.temperature / 1e3
