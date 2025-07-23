@@ -151,7 +151,7 @@ export volume_prime_miller_correction
 """
     flux_gacode_to_imas(
         flux_types::Tuple{Vararg{Symbol}},
-        flux_solutions::Vector{<:GACODE.FluxSolution},
+        flux_solutions::Vector{GACODE.FluxSolution{T}},
         m1d::IMAS.core_transport__model___profiles_1d,
         eqt::IMAS.equilibrium__time_slice,
         cp1d::IMAS.core_profiles__profiles_1d
@@ -161,7 +161,7 @@ Normalizes specified transport fluxes output by GA code via gyrobohm normalizati
 """
 function flux_gacode_to_imas(
     flux_types::Tuple{Vararg{Symbol}},
-    flux_solutions::Vector{<:GACODE.FluxSolution},
+    flux_solutions::Vector{GACODE.FluxSolution{T}},
     m1d::IMAS.core_transport__model___profiles_1d{T},
     eqt::IMAS.equilibrium__time_slice{T},
     cp1d::IMAS.core_profiles__profiles_1d{T}) where {T<:Real}
