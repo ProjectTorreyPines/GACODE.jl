@@ -483,7 +483,7 @@ function update_hcd(dd, input_gacode)
     ngrid = length(input_gacode.rho)
     energy_scale = 1e-6
     particle_scale = 1.0
-    for item in ["qbeame", "qbeami", "qpar_beam", "qmom", "qrfe", "qrfi", "qline", "qbrem", "qsync", "qei", "qpar_wall", "qohme"]
+    for item in ["qbeame", "qbeami", "qpar_beam", "qmom", "qrfe", "qrfi", "qline", "qbrem", "qsync", "qei", "qpar_wall", "qohme", "qfuse", "qfusi"]
         setproperty!(input_gacode, Symbol(item), zeros(ngrid))
     end
 
@@ -511,6 +511,11 @@ function update_hcd(dd, input_gacode)
 
     for source in findall(:line_radiation, dd.core_sources.source)
         input_gacode.qline -= source.profiles_1d[1].electrons.energy * energy_scale
+    end
+
+    for source in findall(:fusion, dd.core_sources.source)
+        input_gacode.qfuse += source.profiles_1d[1].electrons.energy * energy_scale
+        input_gacode.qfusi += source.profiles_1d[1].total_ion_energy * energy_scale
     end
 
     for source in findall(:bremsstrahlung, dd.core_sources.source)
@@ -546,8 +551,8 @@ function InputGACODE(dd::IMAS.dd)
     eqt1d = eqt.profiles_1d
 
     # Set basic parameters
-    input_gacode.bcentr = -1.0*(@ddtime dd.equilibrium.vacuum_toroidal_field.b0)
-    input_gacode.current = -1.0*eqt.global_quantities.ip / 1e6
+    input_gacode.bcentr = -1.0 * (@ddtime dd.equilibrium.vacuum_toroidal_field.b0)
+    input_gacode.current = -1.0 * eqt.global_quantities.ip / 1e6
     input_gacode.rcentr = dd.equilibrium.vacuum_toroidal_field.r0
     input_gacode.rho = rho
     input_gacode.nexp = length(rho)
@@ -578,7 +583,7 @@ function InputGACODE(dd::IMAS.dd)
         )).(rho)
     input_gacode.zmag = IMAS.interp1d(rho_eq, eqt1d.geometric_axis.z).(rho)
     input_gacode.q = IMAS.interp1d(rho_eq, eqt1d.q).(rho)
-    input_gacode.torfluxa = -1.0.*eqt1d.phi[end]./(2*π)
+    input_gacode.torfluxa = -1.0 .* eqt1d.phi[end] ./ 2π
     # Set electron profiles
     input_gacode.ne = cp1d.electrons.density / 1e19
     input_gacode.te = cp1d.electrons.temperature / 1e3
