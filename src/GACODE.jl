@@ -540,7 +540,72 @@ function update_hcd(dd, input_gacode)
 end
 
 
-# Convert your existing code to use the struct
+"""
+    process_ion_species(ion, k, cp1d)
+
+Handles the ion species and splits DT into D and T, this assumes 50/50 DT!
+"""
+function process_ion_species(ion::IMAS.core_profiles__profiles_1d___ion, k::Int, cp1d::IMAS.core_profiles__profiles_1d)
+    """
+    Process a single ion species and return a vector of species dictionaries.
+    Handles DT splitting into separate D and T species.
+    """
+    species_list = []
+    
+    A = ion.element[1].a
+    Z = ion.element[1].z_n
+    label = ion.label
+    
+    # Check if this is a DT species that needs to be split
+    if label == "DT"
+        # Create D species
+        d_species = Dict(
+            :label => "D",
+            :z => 1,
+            :mass => 2.014,  # Deuterium atomic mass
+            :density_thermal => ion.density_thermal * 0.5,  # Split 50/50
+            :density_fast => ion.density_fast * 0.5,
+            :temperature => cp1d.ion[k].temperature,
+            :pressure_fast_perpendicular => ion.pressure_fast_perpendicular * 0.5,
+            :pressure_fast_parallel => ion.pressure_fast_parallel * 0.5
+        )
+        push!(species_list, d_species)
+        
+        # Create T species
+        t_species = Dict(
+            :label => "T",
+            :z => 1,
+            :mass => 3.016,  # Tritium atomic mass
+            :density_thermal => ion.density_thermal * 0.5,  # Split 50/50
+            :density_fast => ion.density_fast * 0.5,
+            :temperature => cp1d.ion[k].temperature,
+            :pressure_fast_perpendicular => ion.pressure_fast_perpendicular * 0.5,
+            :pressure_fast_parallel => ion.pressure_fast_parallel * 0.5
+        )
+        push!(species_list, t_species)
+    else
+        # Regular species - no splitting needed
+        regular_species = Dict(
+            :label => label,
+            :z => Z,
+            :mass => A,
+            :density_thermal => ion.density_thermal,
+            :density_fast => ion.density_fast,
+            :temperature => cp1d.ion[k].temperature,
+            :pressure_fast_perpendicular => ion.pressure_fast_perpendicular,
+            :pressure_fast_parallel => ion.pressure_fast_parallel
+        )
+        push!(species_list, regular_species)
+    end
+    
+    return species_list
+end
+
+"""
+    InputGACODE(dd::IMAS.dd)
+
+Creates an input_gacode from dd
+"""
 function InputGACODE(dd::IMAS.dd)
     input_gacode = InputGACODE()
     cocosio = 2  # GACODE uses COCOS 2
@@ -584,6 +649,7 @@ function InputGACODE(dd::IMAS.dd)
     input_gacode.zmag = IMAS.interp1d(rho_eq, eqt1d.geometric_axis.z).(rho)
     input_gacode.q = IMAS.interp1d(rho_eq, eqt1d.q).(rho)
     input_gacode.torfluxa = -1.0 .* eqt1d.phi[end] ./ 2π
+    
     # Set electron profiles
     input_gacode.ne = cp1d.electrons.density / 1e19
     input_gacode.te = cp1d.electrons.temperature / 1e3
@@ -591,18 +657,27 @@ function InputGACODE(dd::IMAS.dd)
     # Initialize total pressure with electron contribution
     input_gacode.ptot = @. cp1d.electrons.density_thermal * cp1d.electrons.temperature * IMAS.mks.e
 
+    # Process all ion species and create the expanded species list
+    all_species = []
+    for (k, ion) in enumerate(cp1d.ion)
+        species_list = process_ion_species(ion, k, cp1d)
+        append!(all_species, species_list)
+    end
+
+    # Count thermal and fast species
     nion = 0
-    for ion in cp1d.ion
-        if sum(abs.(ion.density_thermal)) > 0
+    for species in all_species
+        if sum(abs.(species[:density_thermal])) > 0
             nion += 1
         end
-        if sum(abs.(ion.density_fast)) > 0
+        if sum(abs.(species[:density_fast])) > 0
             nion += 1
         end
     end
 
     input_gacode.nion = nion
 
+    # Initialize arrays
     input_gacode.ni = zeros(nion, input_gacode.nexp)
     input_gacode.ti = zeros(nion, input_gacode.nexp)
     input_gacode.vtor = zeros(nion, input_gacode.nexp)
@@ -613,50 +688,45 @@ function InputGACODE(dd::IMAS.dd)
     input_gacode.z = zeros(nion)
     input_gacode.mass = zeros(nion)
 
-
-    # Process ion species
+    # Populate the arrays with processed species
     i = 0
-    for (k, ion) in enumerate(cp1d.ion)
-        A = ion.element[1].a
-        Z = ion.element[1].z_n
-
+    for species in all_species
         # Handle thermal ions
-        if sum(abs.(ion.density_thermal)) > 0
+        if sum(abs.(species[:density_thermal])) > 0
             i += 1
             input_gacode.type[i] = "thermal"
-            input_gacode.name[i] = ion.label
-            input_gacode.z[i] = Z
-            input_gacode.mass[i] = A
+            input_gacode.name[i] = species[:label]
+            input_gacode.z[i] = species[:z]
+            input_gacode.mass[i] = species[:mass]
 
-            input_gacode.ni[i, :] = ion.density_thermal / 1e19
-            input_gacode.ti[i, :] = cp1d.ion[k].temperature / 1e3
-            input_gacode.vtor[i, :] = 0.0 * ion.density_thermal
-            input_gacode.vpol[i, :] = 0.0 * ion.density_thermal
-            input_gacode.ptot += ion.density_thermal .* ion.temperature .* IMAS.mks.e
+            input_gacode.ni[i, :] = species[:density_thermal] / 1e19
+            input_gacode.ti[i, :] = species[:temperature] / 1e3
+            input_gacode.vtor[i, :] = 0.0 * species[:density_thermal]
+            input_gacode.vpol[i, :] = 0.0 * species[:density_thermal]
+            input_gacode.ptot += species[:density_thermal] .* species[:temperature] .* IMAS.mks.e
         end
 
         # Handle fast ions
-        if sum(abs.(ion.density_fast)) > 0
+        if sum(abs.(species[:density_fast])) > 0
             i += 1
-            input_gacode.type = "fast"
-            input_gacode.name = ion.label
-            input_gacode.z = Z
-            input_gacode.mass = A
+            input_gacode.type[i] = "fast"
+            input_gacode.name[i] = species[:label]
+            input_gacode.z[i] = species[:z]
+            input_gacode.mass[i] = species[:mass]
 
-            Ti_fast = (((2 .* ion.pressure_fast_perpendicular .+ ion.pressure_fast_parallel) ./ ion.density_fast) ./ IMAS.mks.e ./ 1e3)
-            ni_fast = ion.density_fast / 1e19
+            Ti_fast = (((2 .* species[:pressure_fast_perpendicular] .+ species[:pressure_fast_parallel]) ./ species[:density_fast]) ./ IMAS.mks.e ./ 1e3)
+            ni_fast = species[:density_fast] / 1e19
 
             # Set finite temperature when density ~0 for TGYRO splines
-            navg = mean(ion.density_fast)
-            Ti_fast[ion.density_fast.<1e-6*navg] .= mean(Ti_fast)
+            navg = mean(species[:density_fast])
+            Ti_fast[species[:density_fast].<1e-6*navg] .= mean(Ti_fast)
 
-            # Use the new property syntax
             input_gacode.ni[i, :] = ni_fast
             input_gacode.ti[i, :] = Ti_fast
-            input_gacode.vtor[i, :] = 0.0 * ion.density_thermal
-            input_gacode.vpol[i, :] = 0.0 * ion.density_thermal
+            input_gacode.vtor[i, :] = 0.0 * species[:density_thermal]
+            input_gacode.vpol[i, :] = 0.0 * species[:density_thermal]
 
-            input_gacode.ptot += 2 .* ion.pressure_fast_perpendicular .+ ion.pressure_fast_parallel
+            input_gacode.ptot += 2 .* species[:pressure_fast_perpendicular] .+ species[:pressure_fast_parallel]
         end
     end
 
