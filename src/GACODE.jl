@@ -151,18 +151,18 @@ export volume_prime_miller_correction
 
 """
     flux_gacode_to_imas(
-    	flux_types::Tuple{Vararg{Symbol}},
-    	flux_solutions::Vector{<:GACODE.FluxSolution},
-    	m1d::IMAS.core_transport__model___profiles_1d,
-    	eqt::IMAS.equilibrium__time_slice,
-    	cp1d::IMAS.core_profiles__profiles_1d
+        flux_types::Tuple{Vararg{Symbol}},
+        flux_solutions::Vector{FluxSolution{T}},
+        m1d::IMAS.core_transport__model___profiles_1d,
+        eqt::IMAS.equilibrium__time_slice,
+        cp1d::IMAS.core_profiles__profiles_1d
     )
 
 Normalizes specified transport fluxes output by GA code via gyrobohm normalization and Miller volume correction
 """
 function flux_gacode_to_imas(
     flux_types::Tuple{Vararg{Symbol}},
-    flux_solutions::Vector{<:GACODE.FluxSolution},
+    flux_solutions::Vector{FluxSolution{T}},
     m1d::IMAS.core_transport__model___profiles_1d{T},
     eqt::IMAS.equilibrium__time_slice{T},
     cp1d::IMAS.core_profiles__profiles_1d{T}) where {T<:Real}
@@ -192,7 +192,7 @@ function flux_gacode_to_imas(
 
     if :ion_particle_flux in flux_types
         for (kk, ion) in enumerate(cp1d.ion)
-            ion = resize!(m1d.ion, "element[1].a" => ion.element[1].z_n, "element[1].z_n" => ion.element[1].z_n, "label" => ion.label)
+            ion = resize!(m1d.ion, "element[1].a" => ion.element[1].z_n, "element[1].z_n" => ion.element[1].z_n, "label" => ion.label; wipe=false)
             ion.particles.flux = gyrobohm_particle_flux.(ne, Te, rhos, a) .* (pick_ion_flux(f.PARTICLE_FLUX_i, kk) for f in flux_solutions) .* vprime_miller
         end
     end
