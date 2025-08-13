@@ -233,8 +233,6 @@ function bunit(eqt::IMAS.equilibrium__time_slice)
     return bunit(eqt.profiles_1d)
 end
 
-
-
 # Define the mutable struct for GACODE input
 Base.@kwdef mutable struct InputGACODE
     # Header information
@@ -325,7 +323,6 @@ Base.@kwdef mutable struct InputGACODE
     w0::Union{Vector{Real},Missing} = missing
 
 end
-
 
 function save(input_gacode::InputGACODE, filename::String)
 
@@ -539,7 +536,6 @@ function update_hcd(dd, input_gacode)
     end
 end
 
-
 """
     process_ion_species(ion, k, cp1d)
 
@@ -551,11 +547,11 @@ function process_ion_species(ion::IMAS.core_profiles__profiles_1d___ion, k::Int,
     Handles DT splitting into separate D and T species.
     """
     species_list = []
-    
+
     A = ion.element[1].a
     Z = ion.element[1].z_n
     label = ion.label
-    
+
     # Check if this is a DT species that needs to be split
     if label == "DT"
         # Create D species
@@ -570,7 +566,7 @@ function process_ion_species(ion::IMAS.core_profiles__profiles_1d___ion, k::Int,
             :pressure_fast_parallel => ion.pressure_fast_parallel * 0.5
         )
         push!(species_list, d_species)
-        
+
         # Create T species
         t_species = Dict(
             :label => "T",
@@ -597,7 +593,7 @@ function process_ion_species(ion::IMAS.core_profiles__profiles_1d___ion, k::Int,
         )
         push!(species_list, regular_species)
     end
-    
+
     return species_list
 end
 
@@ -649,7 +645,7 @@ function InputGACODE(dd::IMAS.dd)
     input_gacode.zmag = IMAS.interp1d(rho_eq, eqt1d.geometric_axis.z).(rho)
     input_gacode.q = IMAS.interp1d(rho_eq, eqt1d.q).(rho)
     input_gacode.torfluxa = -1.0 .* eqt1d.phi[end] ./ 2π
-    
+
     # Set electron profiles
     input_gacode.ne = cp1d.electrons.density / 1e19
     input_gacode.te = cp1d.electrons.temperature / 1e3
@@ -796,8 +792,6 @@ function load(filename::String)
     end
     return input_gacode
 end
-
-
 
 const document = Dict()
 document[Symbol(@__MODULE__)] = [name for name in Base.names(@__MODULE__; all=false, imported=false) if name != Symbol(@__MODULE__)]
