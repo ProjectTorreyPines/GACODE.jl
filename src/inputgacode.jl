@@ -310,60 +310,21 @@ function update_hcd(dd, input_gacode)
 end
 
 """
-    process_ion_species(ion, k, cp1d)
+    ion_as_dict(ion::IMAS.core_profiles__profiles_1d___ion)
 
-Process a single ion species and return a vector of species dictionaries. Handles DT splitting into separate D and T species.
+Process a single ion species and return species dictionary. Performs verbatim conversion without modifying species.
 """
-function process_ion_species(ion::IMAS.core_profiles__profiles_1d___ion, k::Int, cp1d::IMAS.core_profiles__profiles_1d)
-    species_list = []
-
-    A = ion.element[1].a
-    Z = ion.element[1].z_n
-    label = ion.label
-
-    # Check if this is a DT species that needs to be split
-    if label == "DT"
-        # Create D species
-        d_species = Dict(
-            :label => "D",
-            :z => 1,
-            :mass => 2.014,  # Deuterium atomic mass
-            :density_thermal => ion.density_thermal * 0.5,  # Split 50/50
-            :density_fast => ion.density_fast * 0.5,
-            :temperature => cp1d.ion[k].temperature,
-            :pressure_fast_perpendicular => ion.pressure_fast_perpendicular * 0.5,
-            :pressure_fast_parallel => ion.pressure_fast_parallel * 0.5
-        )
-        push!(species_list, d_species)
-
-        # Create T species
-        t_species = Dict(
-            :label => "T",
-            :z => 1,
-            :mass => 3.016,  # Tritium atomic mass
-            :density_thermal => ion.density_thermal * 0.5,  # Split 50/50
-            :density_fast => ion.density_fast * 0.5,
-            :temperature => cp1d.ion[k].temperature,
-            :pressure_fast_perpendicular => ion.pressure_fast_perpendicular * 0.5,
-            :pressure_fast_parallel => ion.pressure_fast_parallel * 0.5
-        )
-        push!(species_list, t_species)
-    else
-        # Regular species - no splitting needed
-        regular_species = Dict(
-            :label => label,
-            :z => Z,
-            :mass => A,
-            :density_thermal => ion.density_thermal,
-            :density_fast => ion.density_fast,
-            :temperature => cp1d.ion[k].temperature,
-            :pressure_fast_perpendicular => ion.pressure_fast_perpendicular,
-            :pressure_fast_parallel => ion.pressure_fast_parallel
-        )
-        push!(species_list, regular_species)
-    end
-
-    return species_list
+function ion_as_dict(ion::IMAS.core_profiles__profiles_1d___ion)
+    return Dict(
+        :label => ion.label,
+        :z => ion.element[1].z_n,
+        :mass => ion.element[1].a,
+        :density_thermal => ion.density_thermal,
+        :density_fast => ion.density_fast,
+        :temperature => ion.temperature,
+        :pressure_fast_perpendicular => ion.pressure_fast_perpendicular,
+        :pressure_fast_parallel => ion.pressure_fast_parallel
+    )
 end
 
 """
@@ -422,14 +383,10 @@ function InputGACODE(dd::IMAS.dd)
     # Initialize total pressure with electron contribution
     input_gacode.ptot = @. cp1d.electrons.density_thermal * cp1d.electrons.temperature * IMAS.mks.e
 
-    # Process all ion species and create the expanded species list
-    all_species = []
-    for (k, ion) in enumerate(cp1d.ion)
-        species_list = process_ion_species(ion, k, cp1d)
-        append!(all_species, species_list)
-    end
+    # Process all ion species - now returns single species per ion
+    all_species = [ion_as_dict(ion) for ion in cp1d.ion]
 
-    # Count thermal and fast species
+    # Count thermal and fast species separately
     nion = 0
     for species in all_species
         if sum(abs.(species[:density_thermal])) > 0
