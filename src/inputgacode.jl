@@ -91,6 +91,10 @@ Base.@kwdef mutable struct InputGACODE
     w0::Union{Vector{Real},Missing} = missing
 end
 
+# ======================== #
+# save InputGACODE to file #
+# ======================== #
+
 function save(input_gacode::InputGACODE, filename::String)
     nexp = input_gacode.nexp
     nion = input_gacode.nion
@@ -249,6 +253,205 @@ function expro_writea(io::IO, x::Union{Matrix{<:Real},Missing}, m::Integer, n::I
     end
 end
 
+# ========================== #
+# load InputGACODE from file #
+# ========================== #
+
+function load(filename::String)
+    input_gacode = InputGACODE()
+    lines = readlines(filename)
+    function get_varname(line)
+        if startswith(line, "# ")
+            return split(line, " ")[2]
+        else
+            return nothing
+        end
+    end
+
+    for field_name in fieldnames(InputGACODE)
+
+        if fieldtype(typeof(input_gacode), field_name) == Union{Missing,Vector{AbstractString}}
+            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
+            setproperty!(input_gacode, field_name, collect(split(lines[iline+1], " ")))
+        end
+
+        if fieldtype(typeof(input_gacode), field_name) == Union{Missing,Int}
+            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
+            setproperty!(input_gacode, field_name, parse(Int, lines[iline+1]))
+        end
+
+        if fieldtype(typeof(input_gacode), field_name) == Union{Missing,Real}
+            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
+            setproperty!(input_gacode, field_name, parse(Float64, lines[iline+1]))
+        end
+
+        nexp = input_gacode.nexp
+        nion = input_gacode.nion
+        if field_name == :mass || field_name == :z #nion length vectors
+            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
+            setproperty!(input_gacode, field_name, parse.(Float64, split(lines[iline+1])))
+        elseif fieldtype(typeof(input_gacode), field_name) == Union{Missing,Vector{Real}} #nexp length vectors
+            tmp_array = zeros(nexp)
+            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
+
+            if ~isnothing(iline)
+                for (i, line) in enumerate(lines[(iline+1):(iline+nexp)])
+                    tmp_array[i] = parse(Float64, split(lines[iline+i])[2])
+                end
+                setproperty!(input_gacode, field_name, tmp_array)
+            end
+        end
+
+        if fieldtype(typeof(input_gacode), field_name) == Union{Missing,Matrix{Real}}
+            tmp_array = zeros(nion, nexp)
+            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
+            if ~isnothing(iline)
+                for (i, line) in enumerate(lines[(iline+1):(iline+nexp)])
+                    tmp_array[:, i] = parse.(Float64, split(lines[iline+i])[2:nion+1])
+                end
+                setproperty!(input_gacode, field_name, tmp_array)
+            end
+        end
+    end
+    return input_gacode
+end
+
+# =================== #
+# InputGACODE from dd #
+# =================== #
+
+"""
+    InputGACODE(dd::IMAS.dd)
+
+Creates an input_gacode from dd
+"""
+function InputGACODE(dd::IMAS.dd)
+    input_gacode = InputGACODE()
+    cocosio = 2  # GACODE uses COCOS 2
+
+    rho = dd.core_profiles.profiles_1d[].grid.rho_tor_norm
+    cp1d = dd.core_profiles.profiles_1d[]
+    eqt = dd.equilibrium.time_slice[]
+    eqt1d = eqt.profiles_1d
+
+    # Set basic parameters
+    input_gacode.bcentr = -1.0 * (@ddtime dd.equilibrium.vacuum_toroidal_field.b0)
+    input_gacode.current = -1.0 * eqt.global_quantities.ip / 1e6
+    input_gacode.rcentr = dd.equilibrium.vacuum_toroidal_field.r0
+    input_gacode.rho = rho
+    input_gacode.nexp = length(rho)
+
+    if ismissing(dd.dataset_description.data_entry, :pulse)
+        input_gacode.shot = 1
+    else
+        input_gacode.shot = dd.dataset_description.data_entry.pulse
+    end
+
+    if iszero(dd.global_time)
+        input_gacode.time = 1
+    else
+        input_gacode.time = Int64(floor(1e3 * dd.global_time))
+    end
+
+    # Set geometric profiles
+    rho_eq = eqt1d.rho_tor_norm
+    input_gacode.polflux = IMAS.interp1d(rho_eq, eqt1d.psi .- eqt1d.psi[1]).(rho)
+    input_gacode.rmin = r_min_core_profiles(eqt1d, rho) / IMAS.cgs.m_to_cm
+    input_gacode.rmaj = IMAS.interp1d(rho_eq, 0.5 .* (eqt1d.r_outboard .+ eqt1d.r_inboard)).(rho)
+    input_gacode.kappa = IMAS.interp1d(rho_eq, eqt1d.elongation).(rho)
+    input_gacode.delta = IMAS.interp1d(rho_eq, 0.5 .* (eqt1d.triangularity_lower .+ eqt1d.triangularity_upper)).(rho)
+    input_gacode.zeta =
+        IMAS.interp1d(rho_eq, 0.25 .* (
+            eqt1d.squareness_upper_outer .+ eqt1d.squareness_upper_inner .+
+            eqt1d.squareness_lower_outer .+ eqt1d.squareness_lower_inner
+        )).(rho)
+    input_gacode.zmag = IMAS.interp1d(rho_eq, eqt1d.geometric_axis.z).(rho)
+    input_gacode.q = IMAS.interp1d(rho_eq, eqt1d.q).(rho)
+    input_gacode.torfluxa = -1.0 .* eqt1d.phi[end] ./ 2π
+
+    # Set electron profiles
+    input_gacode.ne = cp1d.electrons.density / 1e19
+    input_gacode.te = cp1d.electrons.temperature / 1e3
+
+    # Initialize total pressure with electron contribution
+    input_gacode.ptot = @. cp1d.electrons.density_thermal * cp1d.electrons.temperature * IMAS.mks.e
+
+    # Process all ion species - now returns single species per ion
+    all_species = [ion_as_dict(ion) for ion in cp1d.ion]
+
+    # Count thermal and fast species separately
+    nion = 0
+    for species in all_species
+        if sum(abs.(species[:density_thermal])) > 0
+            nion += 1
+        end
+        if sum(abs.(species[:density_fast])) > 0
+            nion += 1
+        end
+    end
+    input_gacode.nion = nion
+
+    # Initialize arrays
+    input_gacode.ni = zeros(nion, input_gacode.nexp)
+    input_gacode.ti = zeros(nion, input_gacode.nexp)
+    input_gacode.vtor = zeros(nion, input_gacode.nexp)
+    input_gacode.vpol = zeros(nion, input_gacode.nexp)
+
+    input_gacode.type = Vector{String}(undef, nion)
+    input_gacode.name = Vector{String}(undef, nion)
+    input_gacode.z = zeros(nion)
+    input_gacode.mass = zeros(nion)
+
+    # Populate the arrays with processed species
+    i = 0
+    for species in all_species
+        # Handle thermal ions
+        if sum(abs.(species[:density_thermal])) > 0
+            i += 1
+            input_gacode.type[i] = "thermal"
+            input_gacode.name[i] = species[:label]
+            input_gacode.z[i] = species[:z]
+            input_gacode.mass[i] = species[:mass]
+
+            input_gacode.ni[i, :] = species[:density_thermal] / 1e19
+            input_gacode.ti[i, :] = species[:temperature] / 1e3
+            input_gacode.vtor[i, :] = 0.0 * species[:density_thermal]
+            input_gacode.vpol[i, :] = 0.0 * species[:density_thermal]
+            input_gacode.ptot += species[:density_thermal] .* species[:temperature] .* IMAS.mks.e
+        end
+
+        # Handle fast ions
+        if sum(abs.(species[:density_fast])) > 0
+            i += 1
+            input_gacode.type[i] = "fast"
+            input_gacode.name[i] = species[:label]
+            input_gacode.z[i] = species[:z]
+            input_gacode.mass[i] = species[:mass]
+
+            Ti_fast = (((2 .* species[:pressure_fast_perpendicular] .+ species[:pressure_fast_parallel]) ./ species[:density_fast]) ./ IMAS.mks.e ./ 1e3)
+            ni_fast = species[:density_fast] / 1e19
+
+            # Set finite temperature when density ~0 for TGYRO splines
+            navg = mean(species[:density_fast])
+            Ti_fast[species[:density_fast].<1e-6*navg] .= mean(Ti_fast)
+
+            input_gacode.ni[i, :] = ni_fast
+            input_gacode.ti[i, :] = Ti_fast
+            input_gacode.vtor[i, :] = 0.0 * species[:density_thermal]
+            input_gacode.vpol[i, :] = 0.0 * species[:density_thermal]
+
+            input_gacode.ptot += 2 .* species[:pressure_fast_perpendicular] .+ species[:pressure_fast_parallel]
+        end
+    end
+
+    input_gacode.z_eff = cp1d.zeff
+    input_gacode.w0 = cp1d.rotation_frequency_tor_sonic
+
+    update_hcd(dd, input_gacode)
+
+    return input_gacode
+end
+
 function update_hcd(dd, input_gacode)
     ngrid = length(input_gacode.rho)
     energy_scale = 1e-6
@@ -325,196 +528,4 @@ function ion_as_dict(ion::IMAS.core_profiles__profiles_1d___ion)
         :pressure_fast_perpendicular => ion.pressure_fast_perpendicular,
         :pressure_fast_parallel => ion.pressure_fast_parallel
     )
-end
-
-"""
-    InputGACODE(dd::IMAS.dd)
-
-Creates an input_gacode from dd
-"""
-function InputGACODE(dd::IMAS.dd)
-    input_gacode = InputGACODE()
-    cocosio = 2  # GACODE uses COCOS 2
-
-    rho = dd.core_profiles.profiles_1d[].grid.rho_tor_norm
-    cp1d = dd.core_profiles.profiles_1d[]
-    eqt = dd.equilibrium.time_slice[]
-    eqt1d = eqt.profiles_1d
-
-    # Set basic parameters
-    input_gacode.bcentr = -1.0 * (@ddtime dd.equilibrium.vacuum_toroidal_field.b0)
-    input_gacode.current = -1.0 * eqt.global_quantities.ip / 1e6
-    input_gacode.rcentr = dd.equilibrium.vacuum_toroidal_field.r0
-    input_gacode.rho = rho
-    input_gacode.nexp = length(rho)
-
-    if ismissing(dd.dataset_description.data_entry, :pulse)
-        input_gacode.shot = 1
-    else
-        input_gacode.shot = dd.dataset_description.data_entry.pulse
-    end
-
-    if iszero(dd.global_time)
-        input_gacode.time = 1
-    else
-        input_gacode.time = Int64(floor(1e3 * dd.global_time))
-    end
-
-    # Set geometric profiles
-    rho_eq = eqt1d.rho_tor_norm
-    input_gacode.polflux = IMAS.interp1d(rho_eq, eqt1d.psi .- eqt1d.psi[1]).(rho)
-    input_gacode.rmin = r_min_core_profiles(eqt1d, rho) / IMAS.cgs.m_to_cm
-    input_gacode.rmaj = IMAS.interp1d(rho_eq, 0.5 .* (eqt1d.r_outboard .+ eqt1d.r_inboard)).(rho)
-    input_gacode.kappa = IMAS.interp1d(rho_eq, eqt1d.elongation).(rho)
-    input_gacode.delta = IMAS.interp1d(rho_eq, 0.5 .* (eqt1d.triangularity_lower .+ eqt1d.triangularity_upper)).(rho)
-    input_gacode.zeta =
-        IMAS.interp1d(rho_eq, 0.25 .* (
-            eqt1d.squareness_upper_outer .+ eqt1d.squareness_upper_inner .+
-            eqt1d.squareness_lower_outer .+ eqt1d.squareness_lower_inner
-        )).(rho)
-    input_gacode.zmag = IMAS.interp1d(rho_eq, eqt1d.geometric_axis.z).(rho)
-    input_gacode.q = IMAS.interp1d(rho_eq, eqt1d.q).(rho)
-    input_gacode.torfluxa = -1.0 .* eqt1d.phi[end] ./ 2π
-
-    # Set electron profiles
-    input_gacode.ne = cp1d.electrons.density / 1e19
-    input_gacode.te = cp1d.electrons.temperature / 1e3
-
-    # Initialize total pressure with electron contribution
-    input_gacode.ptot = @. cp1d.electrons.density_thermal * cp1d.electrons.temperature * IMAS.mks.e
-
-    # Process all ion species - now returns single species per ion
-    all_species = [ion_as_dict(ion) for ion in cp1d.ion]
-
-    # Count thermal and fast species separately
-    nion = 0
-    for species in all_species
-        if sum(abs.(species[:density_thermal])) > 0
-            nion += 1
-        end
-        if sum(abs.(species[:density_fast])) > 0
-            nion += 1
-        end
-    end
-
-    input_gacode.nion = nion
-
-    # Initialize arrays
-    input_gacode.ni = zeros(nion, input_gacode.nexp)
-    input_gacode.ti = zeros(nion, input_gacode.nexp)
-    input_gacode.vtor = zeros(nion, input_gacode.nexp)
-    input_gacode.vpol = zeros(nion, input_gacode.nexp)
-
-    input_gacode.type = Vector{String}(undef, nion)
-    input_gacode.name = Vector{String}(undef, nion)
-    input_gacode.z = zeros(nion)
-    input_gacode.mass = zeros(nion)
-
-    # Populate the arrays with processed species
-    i = 0
-    for species in all_species
-        # Handle thermal ions
-        if sum(abs.(species[:density_thermal])) > 0
-            i += 1
-            input_gacode.type[i] = "thermal"
-            input_gacode.name[i] = species[:label]
-            input_gacode.z[i] = species[:z]
-            input_gacode.mass[i] = species[:mass]
-
-            input_gacode.ni[i, :] = species[:density_thermal] / 1e19
-            input_gacode.ti[i, :] = species[:temperature] / 1e3
-            input_gacode.vtor[i, :] = 0.0 * species[:density_thermal]
-            input_gacode.vpol[i, :] = 0.0 * species[:density_thermal]
-            input_gacode.ptot += species[:density_thermal] .* species[:temperature] .* IMAS.mks.e
-        end
-
-        # Handle fast ions
-        if sum(abs.(species[:density_fast])) > 0
-            i += 1
-            input_gacode.type[i] = "fast"
-            input_gacode.name[i] = species[:label]
-            input_gacode.z[i] = species[:z]
-            input_gacode.mass[i] = species[:mass]
-
-            Ti_fast = (((2 .* species[:pressure_fast_perpendicular] .+ species[:pressure_fast_parallel]) ./ species[:density_fast]) ./ IMAS.mks.e ./ 1e3)
-            ni_fast = species[:density_fast] / 1e19
-
-            # Set finite temperature when density ~0 for TGYRO splines
-            navg = mean(species[:density_fast])
-            Ti_fast[species[:density_fast].<1e-6*navg] .= mean(Ti_fast)
-
-            input_gacode.ni[i, :] = ni_fast
-            input_gacode.ti[i, :] = Ti_fast
-            input_gacode.vtor[i, :] = 0.0 * species[:density_thermal]
-            input_gacode.vpol[i, :] = 0.0 * species[:density_thermal]
-
-            input_gacode.ptot += 2 .* species[:pressure_fast_perpendicular] .+ species[:pressure_fast_parallel]
-        end
-    end
-
-    input_gacode.z_eff = cp1d.zeff
-    input_gacode.w0 = cp1d.rotation_frequency_tor_sonic
-
-    update_hcd(dd, input_gacode)
-
-    return input_gacode
-end
-
-function load(filename::String)
-    input_gacode = InputGACODE()
-    lines = readlines(filename)
-    function get_varname(line)
-        if startswith(line, "# ")
-            return split(line, " ")[2]
-        else
-            return nothing
-        end
-    end
-
-    for field_name in fieldnames(InputGACODE)
-
-        if fieldtype(typeof(input_gacode), field_name) == Union{Missing,Vector{AbstractString}}
-            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
-            setproperty!(input_gacode, field_name, collect(split(lines[iline+1], " ")))
-        end
-
-        if fieldtype(typeof(input_gacode), field_name) == Union{Missing,Int}
-            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
-            setproperty!(input_gacode, field_name, parse(Int, lines[iline+1]))
-        end
-
-        if fieldtype(typeof(input_gacode), field_name) == Union{Missing,Real}
-            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
-            setproperty!(input_gacode, field_name, parse(Float64, lines[iline+1]))
-        end
-
-        nexp = input_gacode.nexp
-        nion = input_gacode.nion
-        if field_name == :mass || field_name == :z #nion length vectors
-            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
-            setproperty!(input_gacode, field_name, parse.(Float64, split(lines[iline+1])))
-        elseif fieldtype(typeof(input_gacode), field_name) == Union{Missing,Vector{Real}} #nexp length vectors
-            tmp_array = zeros(nexp)
-            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
-
-            if ~isnothing(iline)
-                for (i, line) in enumerate(lines[(iline+1):(iline+nexp)])
-                    tmp_array[i] = parse(Float64, split(lines[iline+i])[2])
-                end
-                setproperty!(input_gacode, field_name, tmp_array)
-            end
-        end
-
-        if fieldtype(typeof(input_gacode), field_name) == Union{Missing,Matrix{Real}}
-            tmp_array = zeros(nion, nexp)
-            iline = findfirst(line -> get_varname(line) == String(field_name), lines)
-            if ~isnothing(iline)
-                for (i, line) in enumerate(lines[(iline+1):(iline+nexp)])
-                    tmp_array[:, i] = parse.(Float64, split(lines[iline+i])[2:nion+1])
-                end
-                setproperty!(input_gacode, field_name, tmp_array)
-            end
-        end
-    end
-    return input_gacode
 end
