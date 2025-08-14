@@ -66,7 +66,6 @@ Base.@kwdef mutable struct InputGACODE
     jbstor::Union{Vector{Real},Missing} = missing
     sigmapar::Union{Vector{Real},Missing} = missing
 
-
     # heating   
     qbeame::Union{Vector{Real},Missing} = missing
     qbeami::Union{Vector{Real},Missing} = missing
@@ -90,17 +89,14 @@ Base.@kwdef mutable struct InputGACODE
     ptot::Union{Vector{Real},Missing} = missing
     z_eff::Union{Vector{Real},Missing} = missing
     w0::Union{Vector{Real},Missing} = missing
-
 end
 
 function save(input_gacode::InputGACODE, filename::String)
-
     nexp = input_gacode.nexp
     nion = input_gacode.nion
 
     # Write header
     open(filename, "w") do io
-
         println(io, "#  *original : null")
         println(io, "# *statefile : null")
         println(io, "#     *gfile : null")
@@ -196,20 +192,24 @@ function save(input_gacode::InputGACODE, filename::String)
     end
 end
 
+"""
+    expro_writes(io::IO, x::Real, xs1::String, xs2::String)
+
+Write scalar value with identifier and units if non-zero
+"""
 function expro_writes(io::IO, x::Real, xs1::String, xs2::String)
-    """
-    Write scalar value with identifier and units if non-zero
-    """
     if abs(x) > 1e-16
         println(io, "# " * xs1 * " | " * xs2)
         @printf(io, "%.7e\n", x)
     end
 end
 
+"""
+    expro_writei(io::IO, i::Integer, xs1::String)
+
+Write integer value with identifier if positive
+"""
 function expro_writei(io::IO, i::Integer, xs1::String)
-    """
-    Write integer value with identifier if positive
-    """
 
     if i > 0
         println(io, "# " * xs1)
@@ -217,10 +217,12 @@ function expro_writei(io::IO, i::Integer, xs1::String)
     end
 end
 
+"""
+    expro_writev(io::IO, x::Union{Vector{<:Real},Missing}, n::Integer, xs1::String, xs2::String)
+
+Write vector values with indices if non-zero
+"""
 function expro_writev(io::IO, x::Union{Vector{<:Real},Missing}, n::Integer, xs1::String, xs2::String)
-    """
-    Write vector values with indices if non-zero
-    """
     if ~ismissing(x) && sum(abs.(x)) > 1e-16
         println(io, "# " * xs1 * " | " * xs2)
         for i in 1:n
@@ -229,10 +231,12 @@ function expro_writev(io::IO, x::Union{Vector{<:Real},Missing}, n::Integer, xs1:
     end
 end
 
+"""
+    expro_writea(io::IO, x::Union{Matrix{<:Real},Missing}, m::Integer, n::Integer, xs1::String, xs2::String)
+
+Write array values (matrix) with row indices if non-zero
+"""
 function expro_writea(io::IO, x::Union{Matrix{<:Real},Missing}, m::Integer, n::Integer, xs1::String, xs2::String)
-    """
-    Write array values (matrix) with row indices if non-zero
-    """
     if ~ismissing(x) && sum(abs.(x)) > 1e-16
         println(io, "# " * xs1 * " | " * xs2)
         for i in 1:n
@@ -308,13 +312,9 @@ end
 """
     process_ion_species(ion, k, cp1d)
 
-Handles the ion species and splits DT into D and T, this assumes 50/50 DT!
+Process a single ion species and return a vector of species dictionaries. Handles DT splitting into separate D and T species.
 """
 function process_ion_species(ion::IMAS.core_profiles__profiles_1d___ion, k::Int, cp1d::IMAS.core_profiles__profiles_1d)
-    """
-    Process a single ion species and return a vector of species dictionaries.
-    Handles DT splitting into separate D and T species.
-    """
     species_list = []
 
     A = ion.element[1].a
