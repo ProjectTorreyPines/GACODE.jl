@@ -43,6 +43,7 @@ function gyrobohm_energy_flux(cp1d::IMAS.core_profiles__profiles_1d, eqt::IMAS.e
     a = eqt.boundary.minor_radius
     return gyrobohm_energy_flux.(ne, Te, rhos, a)
 end
+
 function gyrobohm_energy_flux(ne::Real, Te::Real, rhos::Real, a::Real)
     return ne / cgs.m³_to_cm³ * cgs.k * Te * c_s(Te) *
            (rhos / (a * cgs.m_to_cm))^2 * cgs.Erg_to_J * cgs.m²_to_cm²
@@ -60,6 +61,7 @@ function gyrobohm_particle_flux(cp1d::IMAS.core_profiles__profiles_1d, eqt::IMAS
     a = eqt.boundary.minor_radius
     return gyrobohm_particle_flux.(ne, Te, rhos, a)
 end
+
 function gyrobohm_particle_flux(ne::Real, Te::Real, rhos::Real, a::Real)
     return gyrobohm_energy_flux(ne, Te, rhos, a) / (mks.e * Te)
 end
@@ -76,6 +78,7 @@ function gyrobohm_momentum_flux(cp1d::IMAS.core_profiles__profiles_1d, eqt::IMAS
     a = eqt.boundary.minor_radius
     return gyrobohm_momentum_flux.(ne, Te, rhos, a)
 end
+
 function gyrobohm_momentum_flux(ne::Real, Te::Real, rhos::Real, a::Real)
     return ne / cgs.m³_to_cm³ * cgs.k * Te *
            rhos^2 / (a * cgs.m_to_cm) * cgs.Erg_to_J * cgs.m²_to_cm²
@@ -119,15 +122,19 @@ function flux_gacode_to_imas(
     bu_itp = IMAS.interp1d(eqt.profiles_1d.rho_tor_norm, bunit(eqt.profiles_1d))
     @views rhos = rho_s.(rho_cp[rho_cp_idxs], Te, Ref(bu_itp))
     a = eqt.boundary.minor_radius
+
     if :ion_energy_flux in flux_types
         m1d.total_ion_energy.flux = @. gyrobohm_energy_flux(ne, Te, rhos, a) * (f.ENERGY_FLUX_i for f in flux_solutions) * vprime_miller
     end
+
     if :electron_energy_flux in flux_types
         m1d.electrons.energy.flux = @. gyrobohm_energy_flux(ne, Te, rhos, a) * (f.ENERGY_FLUX_e for f in flux_solutions) * vprime_miller
     end
+
     if :electron_particle_flux in flux_types
         m1d.electrons.particles.flux = @. gyrobohm_particle_flux(ne, Te, rhos, a) * (f.PARTICLE_FLUX_e for f in flux_solutions) * vprime_miller
     end
+
     if :momentum_flux in flux_types
         m1d.momentum_tor.flux = @. gyrobohm_momentum_flux(ne, Te, rhos, a) * (f.STRESS_TOR_i for f in flux_solutions) * vprime_miller
     end
