@@ -1,9 +1,12 @@
 module GACODE
 
+using CoordinateConventions: transform_cocos
+using IMAS.IMASdd: @cocos2
 using IMAS
 using IMAS: cgs, mks
 using IMASutils: argmin_abs
 using Printf
+using Statistics: mean
 
 # Include the separate modules
 include("physics.jl")
@@ -18,7 +21,7 @@ export FluxSolution, gyrobohm_energy_flux, gyrobohm_particle_flux, gyrobohm_mome
 export volume_prime_miller_correction, flux_gacode_to_imas, pick_ion_flux
 
 # Export functions and types from inputgacode.jl
-export InputGACODE, save, load
+export InputGACODE, save, load, dd!
 
 const document = Dict()
 document[Symbol(@__MODULE__)] = [name for name in Base.names(@__MODULE__; all=false, imported=false) if name != Symbol(@__MODULE__)]
