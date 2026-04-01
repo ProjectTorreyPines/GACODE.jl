@@ -148,6 +148,53 @@ function flux_gacode_to_imas(
 end
 
 """
+    sources_to_gyrobohm(dd::IMAS.dd, rho_transport::AbstractVector{<:Real})
+
+Compute total source fluxes in gyro-Bohm units at the transport grid locations.
+
+Returns a NamedTuple `(Qe, Qi, Ge, Pi)` — electron heat flux, ion heat flux,
+electron particle flux, and toroidal momentum flux — each normalized by the
+local gyro-Bohm scale factor and the Miller volume correction.
+
+This is the inverse of `flux_gacode_to_imas`: it takes IMAS physical source
+fluxes and converts them to the dimensionless gyro-Bohm units used by GA codes.
+"""
+function sources_to_gyrobohm(dd::IMAS.dd, rho_transport::AbstractVector{<:Real})
+    cp1d = dd.core_profiles.profiles_1d[]
+    eqt = dd.equilibrium.time_slice[]
+
+    total_source = resize!(dd.core_sources.source, :total; wipe=false)
+    total_source1d = resize!(total_source.profiles_1d; wipe=false)
+    IMAS.total_sources!(total_source1d, dd.core_sources, cp1d;
+        time0=dd.global_time,
+        fields=[:total_ion_power_inside, :power_inside, :particles_inside, :torque_tor_inside])
+
+    cs_gridpoints = [argmin_abs(total_source1d.grid.rho_tor_norm, rho_x) for rho_x in rho_transport]
+    rho_cp_idxs = [argmin_abs(cp1d.grid.rho_tor_norm, rho_x) for rho_x in rho_transport]
+    rho_eq_idxs = [argmin_abs(eqt.profiles_1d.rho_tor_norm, rho_x) for rho_x in rho_transport]
+
+    ne = cp1d.electrons.density_thermal[rho_cp_idxs]
+    Te = cp1d.electrons.temperature[rho_cp_idxs]
+    bu_itp = IMAS.interp1d(eqt.profiles_1d.rho_tor_norm, bunit(eqt.profiles_1d))
+    rhos = rho_s.(cp1d.grid.rho_tor_norm[rho_cp_idxs], Te, Ref(bu_itp))
+    a = eqt.boundary.minor_radius
+    vprime_miller = volume_prime_miller_correction(eqt)[rho_eq_idxs]
+
+    gB_energy   = gyrobohm_energy_flux.(ne, Te, rhos, a)
+    gB_particle = gyrobohm_particle_flux.(ne, Te, rhos, a)
+    gB_momentum = gyrobohm_momentum_flux.(ne, Te, rhos, a)
+
+    surface = total_source1d.grid.surface[cs_gridpoints]
+
+    Qe = (total_source1d.electrons.power_inside[cs_gridpoints]      ./ surface) ./ (gB_energy   .* vprime_miller)
+    Qi = (total_source1d.total_ion_power_inside[cs_gridpoints]       ./ surface) ./ (gB_energy   .* vprime_miller)
+    Ge = (total_source1d.electrons.particles_inside[cs_gridpoints]   ./ surface) ./ (gB_particle .* vprime_miller)
+    Pi = (total_source1d.torque_tor_inside[cs_gridpoints]            ./ surface) ./ (gB_momentum .* vprime_miller)
+
+    return (; Qe, Qi, Ge, Pi)
+end
+
+"""
     pick_ion_flux(ion_fluxes::AbstractVector{T}, kk::Int) where {T<:Real}
 
 Select which ion flux to take
