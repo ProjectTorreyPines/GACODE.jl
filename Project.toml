@@ -1,7 +1,7 @@
 name = "GACODE"
 uuid = "bb074124-7a58-47ce-bd41-6b7098184f23"
 authors = ["Orso Meneghini <orso82@gmail.com>"]
-version = "1.0.8"
+version = "1.0.9"
 
 [deps]
 CoordinateConventions = "7204ce3a-f536-43d2-be4a-fbed74e90d86"
