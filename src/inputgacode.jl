@@ -694,21 +694,70 @@ function update_hcd(dd, input_gacode)
     end
 end
 
-"""    dd(input_gacode::InputGACODE)
-Create an IMAS `dd` from an `InputGACODE` structure. Inverse of `InputGACODE(dd::IMAS.dd)`.
 """
-function IMAS.dd(input_gacode::InputGACODE)
+Source classes that FUSE/IMAS recompute from `dd.core_profiles` via `IMAS.intrinsic_sources!`.
+Loading these from `input.gacode` and then letting FUSE recompute them can double count,
+since some of them are keyed on `identifier.name` (e.g. `:line_radiation` becomes one source
+per ion, named "line C", "line D", ...) and will not match the single lumped entry read here.
+"""
+const INTRINSIC_SOURCES = (:fusion, :ohmic, :bremsstrahlung, :synchrotron_radiation, :line_radiation, :collisional_equipartition)
+
+"""
+Source classes that FUSE/IMAS do not recompute from `dd.core_profiles`, and that must
+therefore come from `input.gacode` (or from dedicated FUSE actors driven by hardware).
+"""
+const EXTERNAL_SOURCES = (:nbi, :ec, :ic, :gas_puff, :recombination, :charge_exchange)
+
+"""
+    _resolve_sources(sources::Union{Symbol,AbstractVector{Symbol}})
+
+Turn the `sources` keyword of [`dd!`](@ref) into the set of source classes to write.
+"""
+function _resolve_sources(sources::Union{Symbol,AbstractVector{Symbol}})
+    if sources === :all
+        return Set{Symbol}((INTRINSIC_SOURCES..., EXTERNAL_SOURCES...))
+    elseif sources === :external
+        return Set{Symbol}(EXTERNAL_SOURCES)
+    elseif sources === :none
+        return Set{Symbol}()
+    elseif sources isa Symbol
+        error("`sources=$(repr(sources))` is not valid. Use `:all`, `:external`, `:none`, or a vector of $(collect((INTRINSIC_SOURCES..., EXTERNAL_SOURCES...)))")
+    end
+    known = Set{Symbol}((INTRINSIC_SOURCES..., EXTERNAL_SOURCES...))
+    for name in sources
+        name ∈ known || error("`:$(name)` is not a known input.gacode source class. Valid options are $(collect(known))")
+    end
+    return Set{Symbol}(sources)
+end
+
+"""    dd(input_gacode::InputGACODE; sources=:all)
+Create an IMAS `dd` from an `InputGACODE` structure. Inverse of `InputGACODE(dd::IMAS.dd)`.
+
+See [`dd!`](@ref) for the meaning of `sources`.
+"""
+function IMAS.dd(input_gacode::InputGACODE; sources::Union{Symbol,AbstractVector{Symbol}}=:all)
     dd = IMAS.dd()
-    dd!(dd, input_gacode)
+    dd!(dd, input_gacode; sources)
     return dd
 end
 
 """
-    dd!(dd::IMAS.dd, ig::InputGACODE)
+    dd!(dd::IMAS.dd, ig::InputGACODE; sources=:all)
 
 Populate an IMAS `dd` from an `InputGACODE` structure. Inverse of `InputGACODE(dd::IMAS.dd)`.
+
+`sources` selects which `dd.core_sources.source` classes are written:
+
+  - `:all`: every class (default, faithful to the file)
+  - `:external`: only `$(EXTERNAL_SOURCES)`, leaving out everything that
+    `IMAS.intrinsic_sources!` recomputes. Use this when FUSE owns the intrinsic sources,
+    otherwise the file's radiation ends up double counted alongside the recomputed one.
+  - `:none`: no `core_sources` at all
+  - a vector of class names, e.g. `[:gas_puff, :recombination, :charge_exchange]` when FUSE
+    also owns the beams (`dd.nbi.unit`, `dd.ec_launchers.beam`, `dd.ic_antennas.antenna`)
 """
-function dd!(dd::IMAS.dd, ig::InputGACODE)
+function dd!(dd::IMAS.dd, ig::InputGACODE; sources::Union{Symbol,AbstractVector{Symbol}}=:all)
+    write_sources = _resolve_sources(sources)
     # Global time & dataset description
     t = ismissing(ig.time) ? 0.0 : Float64(ig.time) * 1e-3
     dd.global_time = t
@@ -818,9 +867,14 @@ function dd!(dd::IMAS.dd, ig::InputGACODE)
     # Core sources — inverse of update_hcd
     # Sign rule: fields using += in update_hcd are stored positive; -= fields are stored negative.
     E = 1e6   # MW/m³ → W/m³
-    function make_source!(name; qe=nothing, qi=nothing, qpart=nothing, qmom=nothing, jp=nothing)
+    # NOTE: `identifier.name` must be set, otherwise FUSE actors that find-or-create their
+    # source with `resize!(cs.source, :class, "identifier.name" => name)` will never match
+    # these entries and will append a duplicate instead of overwriting (double counting).
+    function make_source!(class::Symbol, name::String; qe=nothing, qi=nothing, qpart=nothing, qmom=nothing, jp=nothing)
+        class ∈ write_sources || return
         (isnothing(qe) && isnothing(qi) && isnothing(qpart) && isnothing(qmom) && isnothing(jp)) && return
-        src = resize!(dd.core_sources.source, Symbol(name); wipe=false)
+        src = resize!(dd.core_sources.source, class; wipe=false)
+        src.identifier.name = name
         p = resize!(src.profiles_1d)
         p.time = t
         p.grid.rho_tor_norm = ig.rho
@@ -833,7 +887,7 @@ function dd!(dd::IMAS.dd, ig::InputGACODE)
     end
 
     # NBI (index 2): qbeame, qbeami, qpar_beam, qmom all use += in update_hcd
-    make_source!("nbi";
+    make_source!(:nbi, "nbi";
         qe=ismissing(ig.qbeame) ? nothing : ig.qbeame .* E,
         qi=ismissing(ig.qbeami) ? nothing : ig.qbeami .* E,
         qpart=ismissing(ig.qpar_beam) ? nothing : ig.qpar_beam,
@@ -841,46 +895,51 @@ function dd!(dd::IMAS.dd, ig::InputGACODE)
         jp=ismissing(ig.jnb) ? nothing : ig.jnb .* 1e6)
 
     # EC (index 3): electron RF heating and RF current drive
-    make_source!("ec";
+    make_source!(:ec, "ec";
         qe=ismissing(ig.qrfe) ? nothing : ig.qrfe .* E,
         jp=ismissing(ig.jrf) ? nothing : ig.jrf .* 1e6)
 
     # IC (index 5): ion RF heating
-    make_source!("ic";
+    make_source!(:ic, "ic";
         qi=ismissing(ig.qrfi) ? nothing : ig.qrfi .* E)
 
     # Fusion (index 6): qfuse and qfusi use +=
-    make_source!("fusion";
+    # NOTE: the name deliberately has no "→", so that IMAS.fusion_source! recognizes this as a
+    # non-FUSE source and deletes it before adding its own reaction-resolved sources.
+    make_source!(:fusion, "fusion";
         qe=ismissing(ig.qfuse) ? nothing : ig.qfuse .* E,
         qi=ismissing(ig.qfusi) ? nothing : ig.qfusi .* E)
 
     # Ohmic (index 7): qohme uses +=
-    make_source!("ohmic"; qe=ismissing(ig.qohme) ? nothing : ig.qohme .* E)
+    make_source!(:ohmic, "ohmic"; qe=ismissing(ig.qohme) ? nothing : ig.qohme .* E)
 
     # Bremsstrahlung (index 8): qbrem uses -= → store as negative
-    make_source!("bremsstrahlung"; qe=ismissing(ig.qbrem) ? nothing : .-ig.qbrem .* E)
+    make_source!(:bremsstrahlung, "brem"; qe=ismissing(ig.qbrem) ? nothing : .-ig.qbrem .* E)
 
     # Synchrotron (index 9): qsync uses -= → store as negative
-    make_source!("synchrotron_radiation"; qe=ismissing(ig.qsync) ? nothing : .-ig.qsync .* E)
+    make_source!(:synchrotron_radiation, "synch"; qe=ismissing(ig.qsync) ? nothing : .-ig.qsync .* E)
 
     # Line radiation (index 10): qline uses -= → store as negative
-    make_source!("line_radiation"; qe=ismissing(ig.qline) ? nothing : .-ig.qline .* E)
+    # NOTE: this is a single lumped source, whereas IMAS.line_radiation_source! writes one
+    # source per ion ("line C", "line D", ...). They can never match, so load this only when
+    # FUSE is not going to recompute radiation (see the `sources` keyword).
+    make_source!(:line_radiation, "line"; qe=ismissing(ig.qline) ? nothing : .-ig.qline .* E)
 
     # Collisional equipartition (index 11): qei uses -= for electrons, += for ions
-    make_source!("collisional_equipartition";
+    make_source!(:collisional_equipartition, "exchange";
         qe=ismissing(ig.qei) ? nothing : .-ig.qei .* E,
         qi=ismissing(ig.qei) ? nothing : ig.qei .* E)
 
     # Gas puff (index 108): qpar_wall uses +=
-    make_source!("gas_puff"; qpart=ismissing(ig.qpar_wall) ? nothing : ig.qpar_wall)
+    make_source!(:gas_puff, "gas"; qpart=ismissing(ig.qpar_wall) ? nothing : ig.qpar_wall)
 
     # Recombination (index 602): qione (electron energy) and qioni (ion energy)
-    make_source!("recombination";
+    make_source!(:recombination, "recombination";
         qe=ismissing(ig.qione) ? nothing : ig.qione .* E,
         qi=ismissing(ig.qioni) ? nothing : ig.qioni .* E)
 
     # Charge exchange (index 305): qcxi (ion energy loss)
-    make_source!("charge_exchange";
+    make_source!(:charge_exchange, "charge_exchange";
         qi=ismissing(ig.qcxi) ? nothing : ig.qcxi .* E)
 
     # Store MXH shape harmonics in profiles_2d (grid_type 57, TEQUILA convention)
