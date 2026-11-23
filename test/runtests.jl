@@ -230,3 +230,44 @@ end
     ig2 = @test_nowarn GACODE.InputGACODE(dd)
     @test ismissing(ig2.jbstor) || length(ig2.jbstor) == ig.nexp
 end
+
+@testset "GACODE toroidal direction of rotation and torque" begin
+    # GACODE (COCOS 2) measures the toroidal angle clockwise from above, IMAS (COCOS 11) counter-clockwise:
+    # whether rotation and torque are co- or counter-current must survive the conversion
+    for current_sign in (1.0, -1.0), rotation_sign in (1.0, -1.0)
+        ig = synthetic_input_gacode()
+        ig.current = current_sign * abs(ig.current)
+        ig.bcentr = -current_sign * abs(ig.bcentr)
+        ig.q = sign(ig.current * ig.bcentr) .* abs.(ig.q) # sign(q) = sign(Ip Bt) in both COCOS 2 and 11
+        ig.w0 =rotation_sign .* abs.(ig.w0)
+        ig.vtor = rotation_sign .* abs.(ig.vtor)
+        ig.qmom = rotation_sign .* abs.(ig.qmom)
+
+        dd = IMAS.dd(ig)
+        eqt = dd.equilibrium.time_slice[]
+        cp1d = dd.core_profiles.profiles_1d[]
+        ip_sign = sign(eqt.global_quantities.ip)
+        co_current = rotation_sign * current_sign # > 0 for co-current rotation and torque
+
+        @test ip_sign == -current_sign
+        @test all(sign.(cp1d.rotation_frequency_tor_sonic) .* ip_sign .== co_current)
+        for ion in cp1d.ion
+            IMAS.hasdata(ion, :rotation_frequency_tor) || continue
+            ω = filter(!iszero, ion.rotation_frequency_tor)
+            @test all(sign.(ω) .* ip_sign .== co_current)
+        end
+        torque = findfirst(:nbi, dd.core_sources.source).profiles_1d[].momentum_tor
+        @test all(sign.(torque) .* ip_sign .== co_current)
+
+        # TGLF momentum flux is along the plasma current, NEO along the GACODE (clockwise) toroidal angle
+        @test GACODE.momentum_flux_sign(:tglf, eqt) == ip_sign
+        @test GACODE.momentum_flux_sign(:neo, eqt) == -1
+        @test GACODE.momentum_flux_sign(:imas, eqt) == 1
+        @test_throws ErrorException GACODE.momentum_flux_sign(:cgyro, eqt)
+
+        # write path undoes the read path
+        ig2 = GACODE.InputGACODE(dd)
+        @test ig2.w0 ≈ ig.w0
+        @test ig2.qmom ≈ ig.qmom
+    end
+end

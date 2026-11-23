@@ -518,9 +518,9 @@ function InputGACODE(dd::IMAS.dd)
         if sum(abs.(species[:density_thermal])) > 0
             i += 1
             if IMAS.hasdata(ion, :rotation_frequency_tor)
-                input_gacode.vtor[i, :] = ion.rotation_frequency_tor .* rmaj
+                input_gacode.vtor[i, :] = _b0_fac .* ion.rotation_frequency_tor .* rmaj
             elseif !ismissing(ion.velocity, :toroidal)
-                input_gacode.vtor[i, :] = ion.velocity.toroidal
+                input_gacode.vtor[i, :] = _b0_fac .* ion.velocity.toroidal
             end
             if !ismissing(ion.velocity, :poloidal)
                 input_gacode.vpol[i, :] = ion.velocity.poloidal
@@ -534,7 +534,8 @@ function InputGACODE(dd::IMAS.dd)
     has_any_vpol || (input_gacode.vpol = missing)
 
     input_gacode.z_eff = cp1d.zeff
-    input_gacode.w0 = cp1d.rotation_frequency_tor_sonic
+    # rotation and torque are signed along the toroidal angle, which is clockwise from above in GACODE (COCOS 2)
+    input_gacode.w0 = _b0_fac .* cp1d.rotation_frequency_tor_sonic
 
     update_hcd(dd, input_gacode)
 
@@ -590,6 +591,8 @@ end
 function update_hcd(dd, input_gacode)
     energy_scale = 1e-6
     particle_scale = 1.0
+    # torque is signed along the toroidal angle, which is clockwise from above in GACODE (COCOS 2)
+    momentum_scale = transform_cocos(IMAS.internal_cocos, 2)["TOR"]
     for item in ["qbeame", "qbeami", "qpar_beam", "qmom", "qrfe", "qrfi", "qline", "qbrem", "qsync", "qei", "qpar_wall", "qohme", "qfuse", "qfusi", "qione", "qioni", "qcxi"]
         setproperty!(input_gacode, Symbol(item), missing)
     end
@@ -610,7 +613,7 @@ function update_hcd(dd, input_gacode)
         ismissing(p1d.electrons, :energy) || accumulate!(:qbeame, p1d.electrons.energy .* energy_scale)
         ismissing(p1d, :total_ion_energy) || accumulate!(:qbeami, p1d.total_ion_energy .* energy_scale)
         ismissing(p1d.electrons, :particles) || accumulate!(:qpar_beam, p1d.electrons.particles .* particle_scale)
-        ismissing(p1d, :momentum_tor) || accumulate!(:qmom, p1d.momentum_tor)
+        ismissing(p1d, :momentum_tor) || accumulate!(:qmom, p1d.momentum_tor .* momentum_scale)
     end
 
     # Add sawtooth to beam since is the only source with all channels
@@ -620,7 +623,7 @@ function update_hcd(dd, input_gacode)
         ismissing(p1d.electrons, :energy) || accumulate!(:qbeame, p1d.electrons.energy .* energy_scale)
         ismissing(p1d, :total_ion_energy) || accumulate!(:qbeami, p1d.total_ion_energy .* energy_scale)
         ismissing(p1d.electrons, :particles) || accumulate!(:qpar_beam, p1d.electrons.particles .* particle_scale)
-        ismissing(p1d, :momentum_tor) || accumulate!(:qmom, p1d.momentum_tor)
+        ismissing(p1d, :momentum_tor) || accumulate!(:qmom, p1d.momentum_tor .* momentum_scale)
     end
 
     for sid in [:ic, :ec, :lh]
@@ -807,7 +810,8 @@ function dd!(dd::IMAS.dd, ig::InputGACODE; sources::Union{Symbol,AbstractVector{
     cp1d.electrons.density_thermal = ig.ne .* 1e19
     cp1d.electrons.temperature     = ig.te .* 1e3    # keV → eV
     ismissing(ig.z_eff) || (cp1d.zeff = ig.z_eff)
-    ismissing(ig.w0)    || (cp1d.rotation_frequency_tor_sonic = ig.w0)
+    # rotation and torque are signed along the toroidal angle, which is clockwise from above in GACODE (COCOS 2)
+    ismissing(ig.w0)    || (cp1d.rotation_frequency_tor_sonic = _b0_fac .* ig.w0)
 
     # Core profiles — ions: two-pass merge so thermal+fast rows of the same species
     # share one IMAS ion entry (matching OMFIT to_omas behavior).
@@ -850,7 +854,7 @@ function dd!(dd::IMAS.dd, ig::InputGACODE; sources::Union{Symbol,AbstractVector{
             ion.density         = ni
             ion.density_thermal = ni
             ion.temperature     = ti
-            ismissing(ig.vtor) || (ion.rotation_frequency_tor = ig.vtor[k, :] ./ ig.rmaj)
+            ismissing(ig.vtor) || (ion.rotation_frequency_tor = _b0_fac .* ig.vtor[k, :] ./ ig.rmaj)
             ismissing(ig.vpol) || (ion.velocity.poloidal = ig.vpol[k, :])
         end
     end
@@ -891,7 +895,7 @@ function dd!(dd::IMAS.dd, ig::InputGACODE; sources::Union{Symbol,AbstractVector{
         qe=ismissing(ig.qbeame) ? nothing : ig.qbeame .* E,
         qi=ismissing(ig.qbeami) ? nothing : ig.qbeami .* E,
         qpart=ismissing(ig.qpar_beam) ? nothing : ig.qpar_beam,
-        qmom=ismissing(ig.qmom) ? nothing : ig.qmom,
+        qmom=ismissing(ig.qmom) ? nothing : _b0_fac .* ig.qmom,
         jp=ismissing(ig.jnb) ? nothing : ig.jnb .* 1e6)
 
     # EC (index 3): electron RF heating and RF current drive

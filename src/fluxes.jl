@@ -95,22 +95,52 @@ function volume_prime_miller_correction(eqt::IMAS.equilibrium__time_slice)
 end
 
 """
+    momentum_flux_sign(momentum_convention::Symbol, eqt::IMAS.equilibrium__time_slice)
+
+Factor (±1) that turns a toroidal momentum flux in the `momentum_convention` of a GA code into
+a flux along the IMAS toroidal angle (counter-clockwise from above, COCOS 11):
+
+  - `:tglf`: TGLF, TJLF, QLGYRO and the TGLF surrogates give the flux along the plasma current,
+    so the factor is `SIGN_IT = sign(Bt) * sign(q)` as set by `InputTGLF` (TGYRO: `mflux = -sign_It * STRESS_TOR`
+    in its clockwise frame, `tgyro_flux.f90`)
+  - `:neo`: NEO gives the flux along the GACODE toroidal angle, which is clockwise from above (COCOS 2),
+    the same frame as its `OMEGA_ROT` input (TGYRO passes `w0` and the NEO momentum flux through unchanged)
+  - `:imas`: the flux is already along the IMAS toroidal angle
+"""
+function momentum_flux_sign(momentum_convention::Symbol, eqt::IMAS.equilibrium__time_slice)
+    if momentum_convention == :tglf
+        return sign(eqt.global_quantities.vacuum_toroidal_field.b0) * sign(eqt.profiles_1d.q[end])
+    elseif momentum_convention == :neo
+        return transform_cocos(IMAS.internal_cocos, 2)["TOR"]
+    elseif momentum_convention == :imas
+        return 1
+    else
+        error("momentum_convention=$(repr(momentum_convention)) is not valid: use :tglf, :neo or :imas")
+    end
+end
+
+"""
     flux_gacode_to_imas(
         flux_types::Tuple{Vararg{Symbol}},
         flux_solutions::Vector{FluxSolution{T}},
         m1d::IMAS.core_transport__model___profiles_1d,
         eqt::IMAS.equilibrium__time_slice,
-        cp1d::IMAS.core_profiles__profiles_1d
+        cp1d::IMAS.core_profiles__profiles_1d;
+        momentum_convention::Symbol=:imas
     )
 
 Normalizes specified transport fluxes output by GA code via gyrobohm normalization and Miller volume correction
+
+`momentum_convention` sets the direction of the `STRESS_TOR_i` momentum flux of the code (see `momentum_flux_sign`):
+`:tglf` for TGLF-like codes, `:neo` for NEO, `:imas` (default) when the flux is already along the IMAS toroidal angle.
 """
 function flux_gacode_to_imas(
     flux_types::Tuple{Vararg{Symbol}},
     flux_solutions::Vector{FluxSolution{T}},
     m1d::IMAS.core_transport__model___profiles_1d{T},
     eqt::IMAS.equilibrium__time_slice{T},
-    cp1d::IMAS.core_profiles__profiles_1d{T}) where {T<:Real}
+    cp1d::IMAS.core_profiles__profiles_1d{T};
+    momentum_convention::Symbol=:imas) where {T<:Real}
 
     rho_cp = cp1d.grid.rho_tor_norm
     rho_eq_idxs = [argmin_abs(eqt.profiles_1d.rho_tor_norm, rho) for rho in m1d.grid_flux.rho_tor_norm]
@@ -136,7 +166,8 @@ function flux_gacode_to_imas(
     end
 
     if :momentum_flux in flux_types
-        m1d.momentum_tor.flux = @. gyrobohm_momentum_flux(ne, Te, rhos, a) * (f.STRESS_TOR_i for f in flux_solutions) * vprime_miller
+        σ = momentum_flux_sign(momentum_convention, eqt)
+        m1d.momentum_tor.flux = @. σ * gyrobohm_momentum_flux(ne, Te, rhos, a) * (f.STRESS_TOR_i for f in flux_solutions) * vprime_miller
     end
 
     if :ion_particle_flux in flux_types
@@ -158,8 +189,9 @@ local gyro-Bohm scale factor and the Miller volume correction.
 
 This is the inverse of `flux_gacode_to_imas`: it takes IMAS physical source
 fluxes and converts them to the dimensionless gyro-Bohm units used by GA codes.
+`Pi` is given in the `momentum_convention` of the code (see `momentum_flux_sign`; default `:tglf`).
 """
-function sources_to_gyrobohm(dd::IMAS.dd, rho_transport::AbstractVector{<:Real})
+function sources_to_gyrobohm(dd::IMAS.dd, rho_transport::AbstractVector{<:Real}; momentum_convention::Symbol=:tglf)
     cp1d = dd.core_profiles.profiles_1d[]
     eqt = dd.equilibrium.time_slice[]
 
@@ -189,7 +221,8 @@ function sources_to_gyrobohm(dd::IMAS.dd, rho_transport::AbstractVector{<:Real})
     Qe = (total_source1d.electrons.power_inside[cs_gridpoints]      ./ surface) ./ (gB_energy   .* vprime_miller)
     Qi = (total_source1d.total_ion_power_inside[cs_gridpoints]       ./ surface) ./ (gB_energy   .* vprime_miller)
     Ge = (total_source1d.electrons.particles_inside[cs_gridpoints]   ./ surface) ./ (gB_particle .* vprime_miller)
-    Pi = (total_source1d.torque_tor_inside[cs_gridpoints]            ./ surface) ./ (gB_momentum .* vprime_miller)
+    σ = momentum_flux_sign(momentum_convention, eqt) # ±1, its own inverse
+    Pi = σ .* (total_source1d.torque_tor_inside[cs_gridpoints] ./ surface) ./ (gB_momentum .* vprime_miller)
 
     return (; Qe, Qi, Ge, Pi)
 end
